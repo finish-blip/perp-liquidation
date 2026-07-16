@@ -91,6 +91,35 @@ describe PerpLiquidation::API::RackApp do
     expect(allowed.status).to eq(200)
   end
 
+  it 'filters and paginates task listings without loading an unbounded result' do
+    3.times do |index|
+      receiver.call(command_payload(
+        risk_decision_id: "risk_page_#{index}", risk_unit_id: "position:page-#{index}",
+        position_id: 700 + index, decision_sequence: 1
+      ))
+    end
+
+    first = JSON.parse(request.get('/api/v1/internal/liquidation/tasks?status=PENDING&limit=2').body)
+    cursor = first.dig('pagination', 'next_before_id')
+    second = JSON.parse(
+      request.get("/api/v1/internal/liquidation/tasks?status=PENDING&limit=2&before_id=#{cursor}").body
+    )
+
+    expect(first.fetch('data').map { |task| task.fetch('risk_decision_id') })
+      .to eq(%w[risk_page_2 risk_page_1])
+    expect(cursor).to be_a(Integer)
+    expect(second.fetch('data').map { |task| task.fetch('risk_decision_id') }).to eq(['risk_page_0'])
+    expect(second.dig('pagination', 'next_before_id')).to be_nil
+  end
+
+  it 'rejects unsafe task listing bounds' do
+    too_large = request.get('/api/v1/internal/liquidation/tasks?limit=501')
+    invalid_cursor = request.get('/api/v1/internal/liquidation/tasks?before_id=not-a-number')
+
+    expect(too_large.status).to eq(422)
+    expect(invalid_cursor.status).to eq(422)
+  end
+
   it 'accepts a risk command and returns the idempotent task' do
     first = request.post(
       '/api/v1/internal/liquidation/commands',

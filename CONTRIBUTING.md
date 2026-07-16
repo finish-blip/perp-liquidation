@@ -6,7 +6,7 @@
 
 1. 从最新 `main` 创建短生命周期分支。
 2. 为行为变化增加或更新测试。
-3. 执行 [`docs/testing.md`](docs/testing.md) 中的本地门禁。
+3. 执行 `docker compose -f docker-compose.test.yml run --build --rm rspec` 本地门禁。
 4. 通过 Pull Request 合并，不直接推送到受保护的 `main`。
 5. 至少由一名熟悉风控、撮合、仓位或结算契约的维护者审核。
 

@@ -51,6 +51,19 @@ describe PerpLiquidation::BinanceFuturesMarketDataClient do
     expect(quote.observed_at.to_f).to be_within(0.001).of(1_752_566_400.123)
   end
 
+  it 'ignores exchange symbols outside the internal ASCII symbol contract' do
+    exchange_info[:symbols].prepend(
+      symbol: "\u5e01\u5b89\u4eba\u751fUSDT", contractType: 'PERPETUAL', status: 'TRADING',
+      filters: []
+    )
+    allow(connection).to receive(:get) do |path, _params|
+      path == '/fapi/v1/exchangeInfo' ? response(200, exchange_info) : response(200, depth)
+    end
+    client = described_class.new(connection: connection, clock: clock)
+
+    expect(client.find(symbol: 'BTCUSDT').symbol).to eq('BTCUSDT')
+  end
+
   it 'caches exchange information while fetching fresh depth for every lookup' do
     allow(connection).to receive(:get) do |path, _params|
       path == '/fapi/v1/exchangeInfo' ? response(200, exchange_info) : response(200, depth)
@@ -161,6 +174,7 @@ describe PerpLiquidation::BinanceFuturesMarketDataClient do
     expect(client).to be_a(PerpLiquidation::ReferenceCheckedMarketDataClient)
     expect(client.execution_client).to be_a(PerpLiquidation::MarketDataHttpClient)
     expect(client.reference_client).to be_a(described_class)
+    expect(client.reference_client.instance_variable_get(:@depth_limit)).to eq(5)
   end
 
   it 'rejects invalid Binance reference thresholds during configuration validation' do

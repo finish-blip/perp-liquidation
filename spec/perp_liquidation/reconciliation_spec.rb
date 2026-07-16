@@ -143,4 +143,18 @@ describe PerpLiquidation::Workers::ReconciliationWorker do
 
     expect(scanner.call).to include(task)
   end
+
+  it 'loads all recoverable states with one bounded repository query' do
+    query_repository = instance_double(PerpLiquidation::MemoryRepository)
+    scanner = PerpLiquidation::Reconciliation::StuckTaskScanner.new(repository: query_repository)
+    expect(query_repository).to receive(:stuck_tasks_by_status).once do |status_cutoffs:, per_status_limit:|
+      expect(status_cutoffs.keys)
+        .to eq(PerpLiquidation::Reconciliation::StuckTaskScanner::DEFAULT_AGE_SECONDS.keys)
+      expect(status_cutoffs.values).to all(be_a(Time))
+      expect(per_status_limit).to eq(100)
+      []
+    end
+
+    expect(scanner.call).to eq([])
+  end
 end

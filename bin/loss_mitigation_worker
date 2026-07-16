@@ -3,7 +3,7 @@
 
 require_relative '../lib/perp_liquidation'
 
-application = PerpLiquidation::Application.new
+application = PerpLiquidation::Application.new(role: :loss_mitigation_worker)
 interval = Float(ENV.fetch('LOSS_MITIGATION_WORKER_INTERVAL_SECONDS', '1'))
 
 loop do

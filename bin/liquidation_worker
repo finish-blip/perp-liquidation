@@ -3,7 +3,7 @@
 
 require_relative '../lib/perp_liquidation'
 
-application = PerpLiquidation::Application.new
+application = PerpLiquidation::Application.new(role: :liquidation_worker)
 poll_interval = Float(ENV.fetch('LIQUIDATION_WORKER_POLL_SECONDS', '0.2'))
 
 loop do

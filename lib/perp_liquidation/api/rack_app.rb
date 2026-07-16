@@ -19,41 +19,39 @@ module PerpLiquidation
       end
 
       def call(env)
-        repository.with_connection do
-          method = env['REQUEST_METHOD']
-          path = env['PATH_INFO'].to_s
-          return json(200, status: 'ok', service: 'perp-liquidation') if method == 'GET' && path == '/health'
-          return json(401, error: 'unauthorized') unless authorized?(env)
-          return metrics_response if method == 'GET' && path == '/metrics'
-          return receive_command(env) if method == 'POST' && path == '/api/v1/internal/liquidation/commands'
-          if method == 'POST' && path == '/api/v1/internal/liquidation/portfolio-plans'
-            return receive_portfolio_plan(env)
-          end
-          if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/portfolio-plans/[^/]+/cancel\z})
-            return cancel_portfolio_plan(env, path)
-          end
-          if method == 'GET' && path.match?(%r{\A/api/v1/internal/liquidation/portfolio-plans/(?:by-risk-decision/)?[^/]+\z})
-            return show_portfolio_plan(path)
-          end
-          return execute_operator_action(env) if method == 'POST' && path == '/api/v1/internal/liquidation/operator-actions'
-          if method == 'GET' && path.match?(%r{\A/api/v1/internal/liquidation/operator-actions/[^/]+\z})
-            return show_operator_action(path)
-          end
-          return cancel_command(env, path) if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/commands/[^/]+/cancel\z})
-          return consume_order_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/orders'
-          return consume_settlement_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/settlements'
-          return consume_adl_settlement_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/adl-settlements'
-          return list_reconciliation_issues(env) if method == 'GET' && path == '/api/v1/internal/liquidation/reconciliation/issues'
-          if method == 'GET' && path == '/api/v1/internal/liquidation/reconciliation/outbox/dead-letters'
-            return list_outbox_dead_letters(env)
-          end
-          if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/tasks/[^/]+/(?:reconcile|replay-outbox)\z})
-            return controlled_operation_required
-          end
-          return list_tasks(env) if method == 'GET' && path == '/api/v1/internal/liquidation/tasks'
-
-          show_task(method, path)
+        method = env['REQUEST_METHOD']
+        path = env['PATH_INFO'].to_s
+        return json(200, status: 'ok', service: 'perp-liquidation') if method == 'GET' && path == '/health'
+        return json(401, error: 'unauthorized') unless authorized?(env)
+        return metrics_response if method == 'GET' && path == '/metrics'
+        return receive_command(env) if method == 'POST' && path == '/api/v1/internal/liquidation/commands'
+        if method == 'POST' && path == '/api/v1/internal/liquidation/portfolio-plans'
+          return receive_portfolio_plan(env)
         end
+        if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/portfolio-plans/[^/]+/cancel\z})
+          return cancel_portfolio_plan(env, path)
+        end
+        if method == 'GET' && path.match?(%r{\A/api/v1/internal/liquidation/portfolio-plans/(?:by-risk-decision/)?[^/]+\z})
+          return show_portfolio_plan(path)
+        end
+        return execute_operator_action(env) if method == 'POST' && path == '/api/v1/internal/liquidation/operator-actions'
+        if method == 'GET' && path.match?(%r{\A/api/v1/internal/liquidation/operator-actions/[^/]+\z})
+          return show_operator_action(path)
+        end
+        return cancel_command(env, path) if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/commands/[^/]+/cancel\z})
+        return consume_order_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/orders'
+        return consume_settlement_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/settlements'
+        return consume_adl_settlement_event(env) if method == 'POST' && path == '/api/v1/internal/liquidation/events/adl-settlements'
+        return list_reconciliation_issues(env) if method == 'GET' && path == '/api/v1/internal/liquidation/reconciliation/issues'
+        if method == 'GET' && path == '/api/v1/internal/liquidation/reconciliation/outbox/dead-letters'
+          return list_outbox_dead_letters(env)
+        end
+        if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/tasks/[^/]+/(?:reconcile|replay-outbox)\z})
+          return controlled_operation_required
+        end
+        return list_tasks(env) if method == 'GET' && path == '/api/v1/internal/liquidation/tasks'
+
+        show_task(method, path)
       rescue NotFound => e
         json(404, error: 'not_found', message: e.message)
       rescue StaleDecision, InvalidTransition => e
@@ -174,8 +172,23 @@ module PerpLiquidation
 
       def list_tasks(env)
         query = parse_query(env['QUERY_STRING'].to_s)
-        rows = repository.all.select { |task| matches_query?(task, query) }
-        json(200, data: rows.map { |task| LiquidationSerializer.call(task) })
+        limit = positive_integer(query.fetch('limit', '100'), 'limit')
+        raise InvalidCommand, 'limit must be between 1 and 500' unless limit <= 500
+        before_id = query['before_id'] && positive_integer(query['before_id'], 'before_id')
+
+        page = repository.list_tasks(
+          filters: {
+            user_id: query['user_id'], symbol: query['symbol'], status: query['status'],
+            risk_unit_id: query['risk_unit_id']
+          },
+          limit: limit,
+          before_id: before_id
+        )
+        json(
+          200,
+          data: page.fetch(:items).map { |task| LiquidationSerializer.call(task) },
+          pagination: { limit: limit, next_before_id: page.fetch(:next_before_id) }
+        )
       end
 
       def cancel_command(env, path)
@@ -256,15 +269,6 @@ module PerpLiquidation
         )
       end
 
-      def matches_query?(task, query)
-        return false if query['user_id'] && task.user_id.to_s != query['user_id'].to_s
-        return false if query['symbol'] && task.symbol != query['symbol']
-        return false if query['status'] && task.status != query['status']
-        return false if query['risk_unit_id'] && task.risk_unit_id != query['risk_unit_id']
-
-        true
-      end
-
       def parse_query(query_string)
         query_string.split('&').each_with_object({}) do |pair, result|
           key, value = pair.split('=', 2)
@@ -272,6 +276,15 @@ module PerpLiquidation
 
           result[decode(key)] = decode(value.to_s)
         end
+      end
+
+      def positive_integer(value, name)
+        parsed = Integer(value)
+        raise InvalidCommand, "#{name} must be positive" unless parsed.positive?
+
+        parsed
+      rescue ArgumentError, TypeError
+        raise InvalidCommand, "#{name} must be a positive integer"
       end
 
       def decode(value)

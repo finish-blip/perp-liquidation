@@ -13,7 +13,7 @@ gem 'rack', '~> 2.2.23'
 gem 'puma', '~> 7.2.1'
 gem 'rspec'
 gem 'faraday', '~> 1.10.6'
-gem 'mysql2', '~> 0.5.3'
+gem 'mysql2', '~> 0.5.6'
 gem 'redis', '~> 4.1.4'
 
 group :test do
