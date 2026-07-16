@@ -102,18 +102,21 @@ module PerpLiquidation
     end
 
     def cancel_plan!(plan_id, reason:)
-      plan = @repository.find_portfolio_plan!(plan_id)
-      return plan if plan.terminal?
-
-      items = @repository.portfolio_plan_items_for(plan.plan_id)
-      tasks = items.map { |item| @repository.find!(item.task_id) }
-      blocked = tasks.find { |task| !task.terminal? && !CANCELLABLE_TASK_STATUSES.include?(task.status) }
-      if blocked
-        raise InvalidTransition,
-              "portfolio plan #{plan.plan_id} cannot be cancelled while task #{blocked.task_id} is #{blocked.status}"
-      end
-
       @repository.with_transaction do
+        plan = @repository.find_portfolio_plan!(plan_id)
+        items = @repository.portfolio_plan_items_for(plan.plan_id)
+        locked_tasks = items.to_h { |item| [item.task_id, @repository.lock_task!(item.task_id)] }
+        plan = @repository.find_portfolio_plan!(plan_id)
+        next plan if plan.terminal?
+
+        items = @repository.portfolio_plan_items_for(plan.plan_id)
+        tasks = items.map { |item| locked_tasks.fetch(item.task_id) }
+        blocked = tasks.find { |task| !task.terminal? && !CANCELLABLE_TASK_STATUSES.include?(task.status) }
+        if blocked
+          raise InvalidTransition,
+                "portfolio plan #{plan.plan_id} cannot be cancelled while task #{blocked.task_id} is #{blocked.status}"
+        end
+
         items.zip(tasks).each do |item, task|
           next if item.terminal?
 
@@ -135,8 +138,8 @@ module PerpLiquidation
         @repository.update_portfolio_plan!(plan)
         @repository.append_portfolio_plan_event!(plan, 'PORTFOLIO_PLAN_CANCELLED', reason: reason)
         enqueue_plan_result!(plan, tasks.first)
+        plan
       end
-      plan
     end
 
     def plan_result_payload(plan)

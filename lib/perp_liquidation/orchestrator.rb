@@ -106,6 +106,9 @@ module PerpLiquidation
       defer_task!(task, e)
     rescue PositionLocked, RetryableError => e
       retry_task!(task, e)
+    rescue InvalidTransition => e
+      current = @repository.find!(task.task_id)
+      current.status != task.status ? current : manual_review!(task, e)
     rescue StandardError => e
       manual_review!(task, e)
     end
@@ -339,8 +342,10 @@ module PerpLiquidation
         average_price: task.average_price&.to_s('F')
       )
       assert_completed!(result, 'bankruptcy check')
+      required_value(result, :check_id, 'bankruptcy check')
+      required_value(result, :currency, 'bankruptcy check')
+      loss = nonnegative_decimal_value(result, :bankruptcy_loss, 'bankruptcy check')
       result = @repository.record_bankruptcy_check!(task, result)
-      loss = decimal_value(result, :bankruptcy_loss)
       @repository.append_event!(task, 'BANKRUPTCY_CHECK_COMPLETED', result)
       if loss.positive?
         @repository.transition!(task, Liquidation::INSURANCE_CLAIMING, 'INSURANCE_CLAIM_PENDING')
@@ -362,8 +367,14 @@ module PerpLiquidation
         currency: value(bankruptcy, :currency)
       )
       assert_completed!(result, 'insurance claim')
+      required_value(result, :claim_id, 'insurance claim')
+      requested = nonnegative_decimal_value(result, :requested_amount, 'insurance claim')
+      covered = nonnegative_decimal_value(result, :covered_amount, 'insurance claim')
+      raise PreconditionsFailed, 'insurance requested amount does not match bankruptcy loss' unless requested == loss
+      unless required_value(result, :currency, 'insurance claim').to_s == value(bankruptcy, :currency).to_s
+        raise PreconditionsFailed, 'insurance currency does not match bankruptcy currency'
+      end
       result = @repository.record_insurance_claim!(task, result)
-      covered = decimal_value(result, :covered_amount)
       raise ManualReviewRequired, 'insurance covered amount exceeds bankruptcy loss' if covered > loss
 
       @repository.append_event!(task, 'INSURANCE_CLAIM_COMPLETED', result)
@@ -395,6 +406,16 @@ module PerpLiquidation
         requested_amount: residual.to_s('F'),
         currency: value(bankruptcy, :currency)
       )
+      required_value(request, :adl_request_id, 'ADL request')
+      status = required_value(request, :status, 'ADL request').to_s
+      unless %w[PENDING COMPLETED].include?(status)
+        raise PreconditionsFailed, "ADL request returned unsupported status #{status.inspect}"
+      end
+      requested = nonnegative_decimal_value(request, :requested_amount, 'ADL request')
+      raise PreconditionsFailed, 'ADL requested amount does not match residual loss' unless requested == residual
+      unless required_value(request, :currency, 'ADL request').to_s == value(bankruptcy, :currency).to_s
+        raise PreconditionsFailed, 'ADL currency does not match bankruptcy currency'
+      end
       request = @repository.record_adl_request!(task, request)
       @repository.append_event!(task, 'ADL_REQUESTED', request)
       @repository.transition!(task, Liquidation::ADL_SETTLEMENT_PENDING, 'ADL_SETTLEMENT_PENDING')
@@ -434,6 +455,24 @@ module PerpLiquidation
 
     def decimal_value(hash, key)
       BigDecimal((value(hash, key) || '0').to_s)
+    end
+
+    def nonnegative_decimal_value(hash, key, operation)
+      amount = BigDecimal(required_value(hash, key, operation).to_s)
+      raise PreconditionsFailed, "#{operation} #{key} cannot be negative" if amount.negative?
+
+      amount
+    rescue ArgumentError, TypeError
+      raise PreconditionsFailed, "#{operation} #{key} must be a decimal"
+    end
+
+    def required_value(hash, key, operation)
+      result = value(hash, key)
+      if result.nil? || (result.respond_to?(:empty?) && result.empty?)
+        raise PreconditionsFailed, "#{operation} response is missing #{key}"
+      end
+
+      result
     end
 
     def execute_action!(task, execution_protection: nil, execution_decision: nil)
@@ -538,6 +577,9 @@ module PerpLiquidation
         user_id: task.user_id,
         symbol: task.symbol
       )
+      unless result.status == 'CANCELLED'
+        raise RetryableError, "cancel risk orders returned #{result.status.inspect}"
+      end
       @repository.append_event!(task, 'RISK_ORDERS_CANCELLED', result.snapshot)
       @repository.transition!(task, Liquidation::SETTLED, 'CANCEL_ACTION_SETTLED', result.snapshot)
       complete!(task, cancelled_order_ids: result.cancelled_order_ids)

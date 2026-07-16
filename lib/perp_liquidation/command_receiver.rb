@@ -15,19 +15,26 @@ module PerpLiquidation
     def call(payload)
       command = LiquidationCommand.from_hash(payload)
       @metrics&.increment('liquidation_task_received_total', labels: { action: command.action })
-      existing = @repository.find_by_risk_decision_id(command.risk_decision_id)
-      return existing if existing
+      @repository.with_risk_unit_admission!(risk_unit_id: command.risk_unit_id) do
+        existing = @repository.find_by_risk_decision_id(command.risk_decision_id)
+        next existing if existing
 
-      previous_latest = @repository.latest_sequence(command.risk_unit_id)
-      task = @repository.create_from_command!(command)
-      if previous_latest && command.decision_sequence <= previous_latest
-        @repository.transition!(task, Liquidation::REJECTED, 'STALE_DECISION_REJECTED', latest_sequence: previous_latest)
-        enqueue_terminal_result!(task, 'STALE_DECISION')
-        return task
+        previous_latest = @repository.latest_sequence(command.risk_unit_id)
+        task = @repository.create_from_command!(command)
+        if previous_latest && command.decision_sequence <= previous_latest
+          @repository.transition!(
+            task,
+            Liquidation::REJECTED,
+            'STALE_DECISION_REJECTED',
+            latest_sequence: previous_latest
+          )
+          enqueue_terminal_result!(task, 'STALE_DECISION')
+          next task
+        end
+
+        supersede_older_tasks!(task)
+        @repository.transition!(task, Liquidation::PENDING, 'TASK_PENDING')
       end
-
-      supersede_older_tasks!(task)
-      @repository.transition!(task, Liquidation::PENDING, 'TASK_PENDING')
     end
 
     def cancel(risk_decision_id, reason:)

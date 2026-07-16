@@ -107,6 +107,31 @@ module PerpLiquidation
       transaction(&block)
     end
 
+    def with_risk_unit_admission!(risk_unit_id:)
+      raise InvalidCommand, 'risk_unit_id is required for command admission' if risk_unit_id.to_s.empty?
+
+      transaction do
+        now = Time.now.utc
+        execute(<<~SQL)
+          INSERT INTO liquidation_portfolio_scope_controls (risk_unit_id, updated_at)
+          VALUES (#{quote(risk_unit_id)}, #{quote(now)})
+          ON DUPLICATE KEY UPDATE updated_at = updated_at
+        SQL
+        first(<<~SQL)
+          SELECT risk_unit_id FROM liquidation_portfolio_scope_controls
+          WHERE risk_unit_id = #{quote(risk_unit_id)}
+          FOR UPDATE
+        SQL
+        result = yield
+        execute(<<~SQL)
+          UPDATE liquidation_portfolio_scope_controls
+          SET updated_at = #{quote(Time.now.utc)}
+          WHERE risk_unit_id = #{quote(risk_unit_id)}
+        SQL
+        result
+      end
+    end
+
     def with_portfolio_scope_admission!(risk_unit_id:, decision_sequence:, risk_decision_id:)
       transaction do
         now = Time.now.utc
@@ -340,6 +365,26 @@ module PerpLiquidation
            'PENDING', #{quote_json({})}, #{quote(now)}, NULL)
       SQL
       operator_action(attributes.fetch(:operation_id))
+    rescue StandardError => e
+      concurrent = operator_action(attributes.fetch(:operation_id))
+      return concurrent if concurrent
+
+      raise e
+    end
+
+    def with_operator_action_lock!(operation_id)
+      transaction do
+        row = first(<<~SQL)
+          SELECT * FROM liquidation_operator_actions
+          WHERE operation_id = #{quote(operation_id)}
+          FOR UPDATE
+        SQL
+        raise NotFound, "operator action #{operation_id} not found" unless row
+
+        attributes = symbolize(row)
+        attributes[:result] = parse_json(attributes.delete(:result_payload))
+        yield OperatorAction.new(**attributes)
+      end
     end
 
     def complete_operator_action!(action, status:, result:)
@@ -837,6 +882,13 @@ module PerpLiquidation
 
     def find!(task_id)
       row = first("SELECT * FROM liquidation_tasks WHERE task_id = #{quote(task_id)} LIMIT 1")
+      raise NotFound, "liquidation task #{task_id} not found" unless row
+
+      hydrate_task(row)
+    end
+
+    def lock_task!(task_id)
+      row = first("SELECT * FROM liquidation_tasks WHERE task_id = #{quote(task_id)} FOR UPDATE")
       raise NotFound, "liquidation task #{task_id} not found" unless row
 
       hydrate_task(row)

@@ -105,8 +105,15 @@ module PerpLiquidation
 
     def transition!(task, status, event_type, payload = {})
       @monitor.synchronize do
+        current = @tasks.fetch(task.task_id) { raise NotFound, "liquidation task #{task.task_id} not found" }
+        if current.status != task.status
+          raise InvalidTransition,
+                "task #{task.task_id} repository status is #{current.status}, object status is #{task.status}"
+        end
+
         from_status = task.status
         task.transition_to!(status)
+        @tasks[task.task_id] = task
         append_event!(task, event_type, payload.merge(from_status: from_status, to_status: status))
         task
       end
@@ -140,6 +147,12 @@ module PerpLiquidation
 
     def with_connection
       yield self
+    end
+
+    def with_risk_unit_admission!(risk_unit_id:)
+      raise InvalidCommand, 'risk_unit_id is required for command admission' if risk_unit_id.to_s.empty?
+
+      @monitor.synchronize { yield }
     end
 
     def with_portfolio_scope_admission!(risk_unit_id:, decision_sequence:, risk_decision_id:)
@@ -290,11 +303,22 @@ module PerpLiquidation
       end
     end
 
+    def with_operator_action_lock!(operation_id)
+      @monitor.synchronize do
+        action = @operator_actions[operation_id]
+        raise NotFound, "operator action #{operation_id} not found" unless action
+
+        yield action
+      end
+    end
+
     def complete_operator_action!(action, status:, result:)
-      action.status = status
-      action.result = result
-      action.completed_at = Time.now.utc
-      action
+      @monitor.synchronize do
+        action.status = status
+        action.result = result
+        action.completed_at = Time.now.utc
+        action
+      end
     end
 
     def operator_action(operation_id)
@@ -598,6 +622,10 @@ module PerpLiquidation
 
     def find!(task_id)
       @tasks.fetch(task_id) { raise NotFound, "liquidation task #{task_id} not found" }
+    end
+
+    def lock_task!(task_id)
+      @monitor.synchronize { find!(task_id) }
     end
 
     def find_by_risk_decision_id(risk_decision_id)

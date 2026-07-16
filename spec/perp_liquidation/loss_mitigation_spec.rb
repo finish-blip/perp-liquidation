@@ -158,4 +158,41 @@ describe PerpLiquidation::Workers::LossMitigationWorker do
     expect(issues.first.issue_type).to eq('LOSS_MITIGATION')
     expect(issues.first.status).to eq('OPEN')
   end
+
+  it 'rejects a completed bankruptcy response that omits the authoritative loss amount' do
+    malformed_client = PerpLiquidation::FakeLossMitigationClient.new
+    allow(malformed_client).to receive(:check_bankruptcy).and_return(
+      check_id: 'bankruptcy_missing_loss', status: 'COMPLETED', currency: 'USDT'
+    )
+    malformed_orchestrator = PerpLiquidation::Orchestrator.new(
+      repository: repository,
+      order_client: order_client,
+      position_client: position_client,
+      risk_unit_lock_manager: PerpLiquidation::RiskUnitLockManager.new,
+      loss_mitigation_client: malformed_client
+    )
+    task = receiver.call(command_payload)
+    PerpLiquidation::Workers::LiquidationWorker.new(
+      repository: repository, orchestrator: malformed_orchestrator
+    ).perform_once
+    malformed_orchestrator.handle_order_event(
+      event_id: 'missing_loss_fill', order_id: task.order_id, status: 'FILLED',
+      order_event_sequence: 1, filled_quantity: '0.01'
+    )
+    malformed_orchestrator.handle_settlement_event(
+      event_id: 'missing_loss_settlement', task_id: task.task_id,
+      order_id: task.order_id, position_id: 888, position_version: 43
+    )
+    worker = described_class.new(
+      repository: repository, orchestrator: malformed_orchestrator,
+      min_age_seconds: 0, clock: -> { Time.now.utc + 1 }
+    )
+
+    worker.perform
+
+    expect(task.status).to eq(PerpLiquidation::Liquidation::BANKRUPTCY_CHECKING)
+    expect(repository.bankruptcy_check_for(task.task_id)).to be_nil
+    expect(repository.reconciliation_issues(task_id: task.task_id).first.actual_payload[:message])
+      .to include('missing bankruptcy_loss')
+  end
 end

@@ -6,6 +6,7 @@ require 'json'
 require 'mysql2'
 require 'time'
 require 'uri'
+require_relative '../lib/perp_liquidation/mysql_connection_pool'
 
 module PerpLiquidation
   module Integration
@@ -14,7 +15,7 @@ module PerpLiquidation
         @env = env
         @token = env.fetch('SERVICE_TOKEN')
         @liquidation_url = env.fetch('LIQUIDATION_URL')
-        @connection = build_connection(env.fetch('DATABASE_URL'))
+        @connection_pool = build_connection_pool(env)
         @market_quotes = {}
       end
 
@@ -67,13 +68,17 @@ module PerpLiquidation
 
       private
 
-      def build_connection(database_url)
-        uri = URI.parse(database_url)
-        Mysql2::Client.new(
+      def build_connection_pool(env)
+        uri = URI.parse(env.fetch('DATABASE_URL'))
+        options = {
           host: uri.host, port: uri.port || 3306, username: uri.user,
           password: uri.password, database: uri.path.sub(%r{\A/}, ''),
           reconnect: true, symbolize_keys: false
-        )
+        }
+        MysqlConnectionPool.new(
+          size: Integer(env.fetch('REFERENCE_DATABASE_POOL_SIZE', env.fetch('DATABASE_POOL_SIZE', '10'))),
+          checkout_timeout: Float(env.fetch('DATABASE_POOL_TIMEOUT_SECONDS', '5'))
+        ) { Mysql2::Client.new(options) }
       end
 
       def find_position(path)
@@ -574,7 +579,7 @@ module PerpLiquidation
       end
 
       def list_risk_results
-        data = @connection.query('SELECT * FROM integration_risk_results ORDER BY created_at DESC LIMIT 100').map do |row|
+        data = execute('SELECT * FROM integration_risk_results ORDER BY created_at DESC LIMIT 100').map do |row|
           { event_id: value(row, 'event_id'), topic: value(row, 'topic'), payload: JSON.parse(value(row, 'payload').to_s) }
         end
         json(200, data: data)
@@ -623,17 +628,21 @@ module PerpLiquidation
       end
 
       def transaction
-        execute('START TRANSACTION')
-        result = yield
-        execute('COMMIT')
-        result
-      rescue StandardError
-        execute('ROLLBACK')
-        raise
+        @connection_pool.with_connection do |connection|
+          connection.query('START TRANSACTION')
+          begin
+            result = yield
+            connection.query('COMMIT')
+            result
+          rescue StandardError
+            connection.query('ROLLBACK')
+            raise
+          end
+        end
       end
 
       def execute(sql)
-        @connection.query(sql)
+        @connection_pool.with_connection { |connection| connection.query(sql) }
       end
 
       def first(sql)
@@ -649,7 +658,7 @@ module PerpLiquidation
         when nil then 'NULL'
         when Numeric then value.to_s
         when Time then "'#{value.utc.strftime('%Y-%m-%d %H:%M:%S.%6N')}'"
-        else "'#{@connection.escape(value.to_s)}'"
+        else @connection_pool.with_connection { |connection| "'#{connection.escape(value.to_s)}'" }
         end
       end
 

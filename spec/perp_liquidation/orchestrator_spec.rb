@@ -404,6 +404,22 @@ describe PerpLiquidation::Orchestrator do
     expect(order_client.submitted_orders).to be_empty
   end
 
+  it 'does not complete a cancel-orders command when the order service reports failure' do
+    allow(order_client).to receive(:cancel_risk_orders).and_return(
+      PerpLiquidation::OrderResult.new(status: 'REJECTED')
+    )
+    task = receiver.call(command_payload(
+      risk_decision_id: 'risk_cancel_rejected', action: 'CANCEL_RISK_ORDERS',
+      instruction: {}, decision_sequence: 104
+    ))
+
+    worker.perform_once
+
+    expect(task.status).to eq(PerpLiquidation::Liquidation::RETRY_WAIT)
+    expect(task.error_message).to include('cancel risk orders returned')
+    expect(repository.pending_outbox).to be_empty
+  end
+
   it 'supersedes an older pending instruction for the same risk unit' do
     old_task = receiver.call(command_payload(risk_decision_id: 'risk_101', decision_sequence: 101))
     new_task = receiver.call(command_payload(risk_decision_id: 'risk_102', decision_sequence: 102))
@@ -418,6 +434,27 @@ describe PerpLiquidation::Orchestrator do
 
     expect(stale.status).to eq(PerpLiquidation::Liquidation::REJECTED)
     expect(repository.pending_outbox.last.payload[:error_code]).to eq('STALE_DECISION')
+  end
+
+  it 'admits concurrent decisions for one risk unit in sequence order' do
+    start = Queue.new
+    sequences = (201..212).to_a.shuffle
+    threads = sequences.map do |sequence|
+      Thread.new do
+        start.pop
+        receiver.call(command_payload(
+          risk_decision_id: "risk_concurrent_#{sequence}",
+          decision_sequence: sequence
+        ))
+      end
+    end
+    sequences.length.times { start << true }
+    threads.each(&:value)
+
+    active = repository.active_for_risk_unit('position:888')
+    expect(active.map(&:decision_sequence)).to eq([sequences.max])
+    expect(active.first.status).to eq(PerpLiquidation::Liquidation::PENDING)
+    expect(repository.all.reject { |task| task == active.first }).to all(satisfy(&:terminal?))
   end
 
   it 'executes one adaptive step as multiple depth-bounded child orders with settlement between them' do

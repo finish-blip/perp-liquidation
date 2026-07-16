@@ -14,20 +14,27 @@ module PerpLiquidation
     def call(payload)
       attributes = normalize(payload)
       existing = @repository.operator_action(attributes.fetch(:operation_id))
-      return existing if existing
+      assert_same_operation!(existing, attributes) if existing
+      return existing if existing && existing.status != 'PENDING'
 
       approval = @approval_client.verify!(attributes)
-      action_record = @repository.create_operator_action!(attributes)
-      result = execute(attributes)
-      @repository.complete_operator_action!(
-        action_record,
-        status: 'COMPLETED',
-        result: result.merge(approval: approval)
-      )
-    rescue StandardError => e
-      if defined?(action_record) && action_record
+      action_record = existing || @repository.create_operator_action!(attributes)
+      assert_same_operation!(action_record, attributes)
+      @repository.with_operator_action_lock!(action_record.operation_id) do |locked_action|
+        next locked_action if locked_action.status != 'PENDING'
+
+        result = execute(attributes)
         @repository.complete_operator_action!(
-          action_record,
+          locked_action,
+          status: 'COMPLETED',
+          result: result.merge(approval: approval)
+        )
+      end
+    rescue StandardError => e
+      current = @repository.operator_action(action_record.operation_id) if defined?(action_record) && action_record
+      if current && current.status == 'PENDING'
+        @repository.complete_operator_action!(
+          current,
           status: 'FAILED',
           result: { error_class: e.class.name, message: e.message }
         )
@@ -36,6 +43,14 @@ module PerpLiquidation
     end
 
     private
+
+    def assert_same_operation!(action, attributes)
+      %i[action target_type target_id operator_id approver_id approval_id reason].each do |field|
+        next if action.public_send(field).to_s == attributes.fetch(field).to_s
+
+        raise InvalidCommand, "operation_id #{attributes.fetch(:operation_id)} was reused with different #{field}"
+      end
+    end
 
     def normalize(payload)
       attributes = {

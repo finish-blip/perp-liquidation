@@ -266,6 +266,82 @@ RSpec.describe 'Portfolio liquidation plans' do
     expect do
       service.call(payload.merge(operation_id: 'operator_cancel_plan_2', approver_id: 'operator-a'))
     end.to raise_error(PerpLiquidation::InvalidCommand, /must be different/)
+
+    expect do
+      service.call(payload.merge(reason: 'different authorized operation'))
+    end.to raise_error(PerpLiquidation::InvalidCommand, /reused with different reason/)
+  end
+
+  it 'stops a worker safely when its claimed task snapshot was concurrently cancelled' do
+    plan = receiver.call(portfolio_command_payload)
+    claimed = repository.claim_next_task!(worker_id: 'stale-worker')
+    stale_snapshot = PerpLiquidation::Liquidation.new(claimed.snapshot)
+
+    coordinator.cancel_plan!(plan.plan_id, reason: 'risk operation cancelled')
+    result = orchestrator.execute(stale_snapshot)
+
+    expect(result.status).to eq(PerpLiquidation::Liquidation::CANCELLED)
+    expect(repository.find!(claimed.task_id).status).to eq(PerpLiquidation::Liquidation::CANCELLED)
+    expect(order_client.submitted_orders).to be_empty
+  end
+
+  it 'resumes an approved operator action left pending by a crashed process' do
+    plan = receiver.call(portfolio_command_payload)
+    reconciliation_worker = PerpLiquidation::Workers::ReconciliationWorker.new(
+      repository: repository, orchestrator: orchestrator, position_client: position_client
+    )
+    service = PerpLiquidation::OperatorActionService.new(
+      repository: repository,
+      portfolio_plan_receiver: receiver,
+      reconciliation_worker: reconciliation_worker,
+      approval_client: PerpLiquidation::FakeApprovalClient.new
+    )
+    payload = {
+      operation_id: 'operator_pending_recovery',
+      action: 'CANCEL_PORTFOLIO_PLAN',
+      target_type: 'PORTFOLIO_PLAN',
+      target_id: plan.plan_id,
+      operator_id: 'operator-a',
+      approver_id: 'operator-b',
+      approval_id: 'approval-pending-recovery',
+      reason: 'exchange maintenance'
+    }
+    repository.create_operator_action!(payload)
+
+    action = service.call(payload)
+
+    expect(action.status).to eq('COMPLETED')
+    expect(plan.status).to eq('CANCELLED')
+    expect(action.result[:approval]).to include(approved: true)
+  end
+
+  it 'keeps a pending operator action recoverable when approval verification is temporarily rejected' do
+    plan = receiver.call(portfolio_command_payload)
+    reconciliation_worker = PerpLiquidation::Workers::ReconciliationWorker.new(
+      repository: repository, orchestrator: orchestrator, position_client: position_client
+    )
+    payload = {
+      operation_id: 'operator_pending_approval_retry',
+      action: 'CANCEL_PORTFOLIO_PLAN',
+      target_type: 'PORTFOLIO_PLAN',
+      target_id: plan.plan_id,
+      operator_id: 'operator-a',
+      approver_id: 'operator-b',
+      approval_id: 'approval-pending-retry',
+      reason: 'exchange maintenance'
+    }
+    repository.create_operator_action!(payload)
+    service = PerpLiquidation::OperatorActionService.new(
+      repository: repository,
+      portfolio_plan_receiver: receiver,
+      reconciliation_worker: reconciliation_worker,
+      approval_client: PerpLiquidation::FakeApprovalClient.new(approved: false)
+    )
+
+    expect { service.call(payload) }
+      .to raise_error(PerpLiquidation::PreconditionsFailed, /not approved/)
+    expect(repository.operator_action(payload[:operation_id]).status).to eq('PENDING')
+    expect(plan.status).to eq('EXECUTING')
   end
 
   it 'does not execute an operator action when the approval service rejects it' do
