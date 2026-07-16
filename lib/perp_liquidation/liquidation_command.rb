@@ -240,6 +240,16 @@ module PerpLiquidation
       raise InvalidCommand, 'portfolio_plan_id is required' if portfolio_plan_id.to_s.empty?
       raise InvalidCommand, 'plan_item_sequence must be positive' unless plan_item_sequence&.positive?
       raise InvalidCommand, 'authorized_notional must be positive' unless authorized_notional&.positive?
+      mark_price = self.class.fetch(risk_snapshot, :mark_price, required: false)
+      raise InvalidCommand, 'portfolio risk_snapshot.mark_price is required' if mark_price.nil?
+
+      notional_reference_price = decimal(mark_price)
+      unless notional_reference_price&.positive?
+        raise InvalidCommand, 'portfolio risk_snapshot.mark_price must be positive'
+      end
+      if target_quantity * notional_reference_price > authorized_notional
+        raise InvalidCommand, 'target quantity exceeds authorized_notional at risk snapshot mark_price'
+      end
     end
 
     def normalize_execution_plan(plan)

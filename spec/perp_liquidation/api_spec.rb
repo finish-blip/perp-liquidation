@@ -36,11 +36,13 @@ describe PerpLiquidation::API::RackApp do
       repository: repository, orchestrator: orchestrator, position_client: position_client
     )
   end
+  let(:approval_client) { PerpLiquidation::FakeApprovalClient.new }
   let(:app) do
     operator_service = PerpLiquidation::OperatorActionService.new(
       repository: repository,
       portfolio_plan_receiver: portfolio_receiver,
-      reconciliation_worker: reconciliation_worker
+      reconciliation_worker: reconciliation_worker,
+      approval_client: approval_client
     )
     described_class.new(
       repository: repository,
@@ -159,23 +161,19 @@ describe PerpLiquidation::API::RackApp do
     expect(task.status).to eq(PerpLiquidation::Liquidation::COMPLETED)
   end
 
-  it 'manually reconciles a task and lists reconciliation issues' do
+  it 'rejects direct task reconciliation that bypasses dual approval' do
     task = receiver.call(command_payload)
     PerpLiquidation::Workers::LiquidationWorker.new(repository: repository, orchestrator: orchestrator).perform_once
     attempt = repository.order_attempts_for(task.task_id).first
     order_client.submitted_orders.delete(attempt.client_order_id)
 
     reconcile_response = request.post("/api/v1/internal/liquidation/tasks/#{task.task_id}/reconcile")
-    issues_response = request.get(
-      "/api/v1/internal/liquidation/reconciliation/issues?task_id=#{task.task_id}&status=OPEN"
-    )
-
-    expect(reconcile_response.status).to eq(202)
-    expect(issues_response.status).to eq(200)
-    expect(JSON.parse(issues_response.body).dig('data', 0, 'issue_type')).to eq('ORDER_RECONCILIATION')
+    expect(reconcile_response.status).to eq(403)
+    expect(JSON.parse(reconcile_response.body).fetch('error')).to eq('dual_approval_required')
+    expect(repository.reconciliation_issues(task_id: task.task_id)).to be_empty
   end
 
-  it 'replays a published outbox event for a task' do
+  it 'rejects direct outbox replay that bypasses dual approval' do
     task = receiver.call(command_payload)
     event = repository.enqueue_outbox!(
       task,
@@ -186,9 +184,9 @@ describe PerpLiquidation::API::RackApp do
 
     response = request.post("/api/v1/internal/liquidation/tasks/#{task.task_id}/replay-outbox")
 
-    expect(response.status).to eq(202)
-    expect(JSON.parse(response.body)['replayed_events']).to eq(1)
-    expect(repository.pending_outbox.map(&:event_id)).to include(event.event_id)
+    expect(response.status).to eq(403)
+    expect(JSON.parse(response.body).fetch('error')).to eq('dual_approval_required')
+    expect(repository.pending_outbox.map(&:event_id)).not_to include(event.event_id)
   end
 
   it 'accepts and queries an account-level portfolio liquidation plan' do
@@ -230,6 +228,7 @@ describe PerpLiquidation::API::RackApp do
     expect(show.status).to eq(200)
     expect(JSON.parse(show.body).dig('data', 'status')).to eq('COMPLETED')
     expect(repository.find_portfolio_plan!('portfolio_plan_201').status).to eq('CANCELLED')
+    expect(approval_client.verified.map { |evidence| evidence[:approval_id] }).to include('approval-api-1')
   end
 
   it 'rejects direct portfolio cancellation that bypasses dual approval' do

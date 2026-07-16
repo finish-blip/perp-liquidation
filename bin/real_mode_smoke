@@ -139,6 +139,22 @@ end
 filled_order_ids = []
 adl_completed = false
 adaptive_cancel_completed = false
+reconciliation_sequence = 0
+reconcile_task = lambda do
+  reconciliation_sequence += 1
+  request(
+    :post,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/operator-actions",
+    operation_id: "reconcile_#{task_id}_#{reconciliation_sequence}",
+    action: 'RECONCILE_TASK',
+    target_type: 'TASK',
+    target_id: task_id,
+    operator_id: 'operator-a',
+    approver_id: 'operator-b',
+    approval_id: "approval_reconcile_#{task_id}_#{reconciliation_sequence}",
+    reason: 'component smoke recovery'
+  )
+end
 120.times do
   details = request(:get, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}")
   task = details.fetch('data')
@@ -181,12 +197,12 @@ adaptive_cancel_completed = false
     filled_order_ids << order_id
     if ADAPTIVE_CANCEL && !adaptive_cancel_completed
       sleep 0.75
-      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
-      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+      reconcile_task.call
+      reconcile_task.call
       adaptive_cancel_completed = true
     elsif RECONCILE
-      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
-      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+      reconcile_task.call
+      reconcile_task.call
     end
   end
   sleep 0.25

@@ -12,11 +12,13 @@ module PerpLiquidation
         'liquidation.reconcile.requested'
       ].freeze
 
-      def initialize(command_receiver:, orchestrator:, reconciliation_worker:, portfolio_plan_receiver: nil)
+      def initialize(command_receiver:, orchestrator:, reconciliation_worker:, portfolio_plan_receiver: nil,
+                     operator_action_service: nil)
         @command_receiver = command_receiver
         @portfolio_plan_receiver = portfolio_plan_receiver
         @orchestrator = orchestrator
         @reconciliation_worker = reconciliation_worker
+        @operator_action_service = operator_action_service
       end
 
       def call(topic, payload)
@@ -31,10 +33,12 @@ module PerpLiquidation
           when 'position.settlement.confirmed' then @orchestrator.handle_settlement_event(payload)
           when 'adl.settlement.confirmed' then @orchestrator.handle_adl_settlement(payload)
           when 'liquidation.reconcile.requested'
-            task_id = value(payload, :task_id)
-            raise MissingField, 'missing task_id in reconciliation request' unless task_id
+            raise InvalidCommand, 'operator action service is not configured' unless @operator_action_service
+            unless (value(payload, :schema_version) || 0).to_i == 2
+              raise InvalidCommand, 'liquidation.reconcile.requested requires schema_version 2 approval evidence'
+            end
 
-            @reconciliation_worker.reconcile(repository.find!(task_id))
+            @operator_action_service.call(payload)
           else
             raise InvalidCommand, "unsupported event topic #{topic.inspect}"
           end

@@ -26,7 +26,8 @@ SCENARIOS = [
   ['real-adl', 'real_mode_smoke', ['--adl']],
   ['portfolio', 'portfolio_mode_smoke', []],
   ['portfolio-cancel', 'portfolio_mode_smoke', ['--cancel']],
-  ['redis-stream', 'stream_smoke', []]
+  ['redis-stream', 'stream_smoke', []],
+  ['portfolio-concurrent', 'portfolio_mode_smoke', ['--concurrent']]
 ].freeze
 
 def wait_for_health!(base_url, label)

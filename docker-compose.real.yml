@@ -25,6 +25,7 @@ services:
       - ./db/migrations/006_add_execution_protection.sql:/docker-entrypoint-initdb.d/008_execution_protection.sql:ro
       - ./db/migrations/007_add_adaptive_execution.sql:/docker-entrypoint-initdb.d/009_adaptive_execution.sql:ro
       - ./db/migrations/008_add_portfolio_liquidation.sql:/docker-entrypoint-initdb.d/010_portfolio_liquidation.sql:ro
+      - ./db/migrations/009_add_portfolio_scope_controls.sql:/docker-entrypoint-initdb.d/012_portfolio_scope_controls.sql:ro
       - ./db/integration/001_create_reference_service_tables.sql:/docker-entrypoint-initdb.d/005_reference.sql:ro
       - ./db/integration/002_create_loss_mitigation_reference_tables.sql:/docker-entrypoint-initdb.d/006_loss_reference.sql:ro
       - ./db/integration/003_add_portfolio_reference_data.sql:/docker-entrypoint-initdb.d/011_portfolio_reference.sql:ro
@@ -62,6 +63,7 @@ services:
       ACCOUNT_SERVICE_URL: http://reference-services:3101
       MARKET_DATA_SERVICE_URL: http://reference-services:3101
       RISK_SERVICE_URL: http://reference-services:3101
+      APPROVAL_SERVICE_URL: http://reference-services:3101
       LOSS_MITIGATION_SERVICE_URL: http://reference-services:3101
       LIQUIDATION_URL: http://api:9292
       SERVICE_TOKEN: local-integration-token

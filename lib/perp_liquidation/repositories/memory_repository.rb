@@ -142,6 +142,25 @@ module PerpLiquidation
       yield self
     end
 
+    def with_portfolio_scope_admission!(risk_unit_id:, decision_sequence:, risk_decision_id:)
+      @monitor.synchronize do
+        existing = find_portfolio_plan_by_risk_decision_id(risk_decision_id)
+        return existing if existing
+
+        latest = latest_portfolio_sequence(risk_unit_id)
+        if latest && decision_sequence <= latest
+          raise StaleDecision, "portfolio decision sequence #{decision_sequence} is not newer than #{latest}"
+        end
+        active = active_portfolio_plan_for_scope(risk_unit_id)
+        if active
+          raise PreconditionsFailed,
+                "portfolio risk unit #{risk_unit_id} already has active plan #{active.plan_id}"
+        end
+
+        yield
+      end
+    end
+
     def with_inbox_event!(event_id, _topic)
       @monitor.synchronize do
         return nil if inbox_processed?(event_id)
@@ -297,7 +316,7 @@ module PerpLiquidation
         task = @tasks.values.select do |candidate|
           ready = candidate.status == Liquidation::PENDING ||
                   (candidate.status == Liquidation::RETRY_WAIT && (!candidate.next_retry_at || candidate.next_retry_at <= now))
-          reclaimable = %w[CLAIMED LOCKING VALIDATING].include?(candidate.status) &&
+          reclaimable = %w[CLAIMED LOCKING VALIDATING EXECUTING].include?(candidate.status) &&
                         candidate.claim_expires_at && candidate.claim_expires_at <= now
           (ready || reclaimable) && no_older_active_task?(candidate)
         end.min_by do |candidate|
@@ -307,7 +326,7 @@ module PerpLiquidation
         return nil unless task
 
         transition!(task, Liquidation::PENDING, 'RETRY_READY') if task.status == Liquidation::RETRY_WAIT
-        if %w[CLAIMED LOCKING VALIDATING].include?(task.status)
+        if %w[CLAIMED LOCKING VALIDATING EXECUTING].include?(task.status)
           transition!(task, Liquidation::PENDING, 'EXPIRED_CLAIM_RECOVERED', previous_worker: task.claimed_by)
         end
         task.claimed_by = worker_id

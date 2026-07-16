@@ -76,17 +76,17 @@ GET /api/v1/internal/liquidation/reconciliation/issues?status=OPEN&task_id={task
 
 ## Manual operations
 
-Trigger the appropriate reconciliation path for the current task state:
+Reconciliation and Outbox replay are controlled operations. Submit them through
+the operator action endpoint with approval evidence verified by the configured
+approval service:
 
 ```http
-POST /api/v1/internal/liquidation/tasks/{taskId}/reconcile
+POST /api/v1/internal/liquidation/operator-actions
 ```
 
-Replay all Outbox events belonging to a task:
-
-```http
-POST /api/v1/internal/liquidation/tasks/{taskId}/replay-outbox
-```
+Use `action=RECONCILE_TASK` or `action=REPLAY_OUTBOX`, `target_type=TASK`, and
+provide distinct operator/approver identities plus a valid `approval_id`.
+The legacy direct task endpoints return `403 dual_approval_required`.
 
 Outbox replay clears `published_at`; the existing dispatcher then republishes
 the event with the same `event_id`. Downstream consumers must remain idempotent.

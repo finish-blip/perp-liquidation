@@ -182,19 +182,21 @@ paths:
   /api/v1/internal/liquidation/tasks/{taskId}/reconcile:
     post:
       operationId: reconcileLiquidationTask
+      deprecated: true
+      description: Direct reconciliation is blocked; use the dual-approved operator action endpoint.
       parameters:
         - $ref: "#/components/parameters/TaskId"
       responses:
-        "202": { $ref: "#/components/responses/Accepted" }
-        "422": { $ref: "#/components/responses/InvalidCommand" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/internal/liquidation/tasks/{taskId}/replay-outbox:
     post:
       operationId: replayLiquidationResult
+      deprecated: true
+      description: Direct replay is blocked; use the dual-approved operator action endpoint.
       parameters:
         - $ref: "#/components/parameters/TaskId"
       responses:
-        "202": { $ref: "#/components/responses/Accepted" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /api/v1/internal/liquidation/reconciliation/issues:
     get:
       operationId: listReconciliationIssues
@@ -275,6 +277,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Conflict:
       description: State or sequence conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: The operation requires verified dual approval.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }

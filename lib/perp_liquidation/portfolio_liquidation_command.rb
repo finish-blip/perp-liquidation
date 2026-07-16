@@ -90,6 +90,7 @@ module PerpLiquidation
       if total > max_total_authorized_notional
         raise InvalidCommand, 'portfolio item notionals exceed max_total_authorized_notional'
       end
+      child_commands
     end
 
     def normalize_items(raw_items)

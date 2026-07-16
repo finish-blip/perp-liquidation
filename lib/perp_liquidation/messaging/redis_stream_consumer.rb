@@ -5,7 +5,8 @@ require 'json'
 module PerpLiquidation
   module Messaging
     class RedisStreamConsumer
-      def initialize(redis:, router:, topics:, group:, consumer:, max_delivery_attempts: 5, block_ms: 1000)
+      def initialize(redis:, router:, topics:, group:, consumer:, max_delivery_attempts: 5,
+                     block_ms: 1000, claim_idle_ms: 30_000)
         @redis = redis
         @router = router
         @topics = topics
@@ -13,11 +14,14 @@ module PerpLiquidation
         @consumer = consumer
         @max_delivery_attempts = max_delivery_attempts
         @block_ms = block_ms
+        @claim_idle_ms = Integer(claim_idle_ms)
+        raise InvalidCommand, 'stream claim idle time must be positive' unless @claim_idle_ms.positive?
         ensure_groups!
       end
 
       def poll(count: 20)
-        messages = read('0', count: count, block_ms: 1)
+        messages = reclaim_stale(count)
+        messages = read('0', count: count, block_ms: 1) if messages.empty?
         messages = read('>', count: count, block_ms: @block_ms) if messages.empty?
         messages.each { |stream, id, fields| process(stream, id, fields) }
         messages.length
@@ -44,6 +48,20 @@ module PerpLiquidation
         normalize(response)
       end
 
+      def reclaim_stale(count)
+        @topics.each_with_object([]) do |topic, messages|
+          break messages if messages.length >= count
+
+          response = @redis.call(
+            'XAUTOCLAIM', topic, @group, @consumer, @claim_idle_ms, '0-0',
+            'COUNT', count - messages.length
+          )
+          Array(response && response[1]).each do |id, fields|
+            messages << [topic, id, normalize_fields(fields)]
+          end
+        end
+      end
+
       def normalize(response)
         Array(response).flat_map do |stream_entry|
           stream, entries = stream_entry
@@ -52,6 +70,12 @@ module PerpLiquidation
             [stream, id, fields]
           end
         end
+      end
+
+      def normalize_fields(fields)
+        return fields if fields.is_a?(Hash)
+
+        Array(fields).each_slice(2).to_h
       end
 
       def process(stream, id, fields)

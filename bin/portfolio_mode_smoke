@@ -10,6 +10,7 @@ TOKEN = ENV.fetch('SERVICE_TOKEN', 'local-integration-token')
 LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
 REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', 'http://127.0.0.1:3101')
 CANCEL_WITH_APPROVAL = ARGV.include?('--cancel')
+CONCURRENT_ADMISSION = ARGV.include?('--concurrent')
 
 def request(method, url, body = nil)
   uri = URI(url)
@@ -127,6 +128,36 @@ command = {
   expire_at: (now + 300).iso8601,
   created_at: now.iso8601
 }
+
+if CONCURRENT_ADMISSION
+  competing = JSON.parse(JSON.generate(command), symbolize_names: true)
+  competing[:plan_id] = "#{plan_id}_competing"
+  competing[:risk_decision_id] = "#{risk_decision_id}_competing"
+  competing[:decision_sequence] = sequence + 1
+  gate = Queue.new
+  results = Queue.new
+  threads = [command, competing].map do |payload|
+    Thread.new do
+      gate.pop
+      results << request(
+        :post,
+        "#{LIQUIDATION_URL}/api/v1/internal/liquidation/portfolio-plans",
+        payload
+      )
+    rescue StandardError => e
+      results << e
+    end
+  end
+  threads.length.times { gate << true }
+  threads.each(&:join)
+  outcomes = threads.length.times.map { results.pop }
+  accepted = outcomes.count { |outcome| outcome.is_a?(Hash) }
+  rejected = outcomes.count { |outcome| outcome.is_a?(StandardError) }
+  raise "expected one accepted and one rejected plan, got #{outcomes.inspect}" unless accepted == 1 && rejected == 1
+
+  puts JSON.pretty_generate(accepted: accepted, rejected: rejected)
+  exit 0
+end
 
 created = request(
   :post,

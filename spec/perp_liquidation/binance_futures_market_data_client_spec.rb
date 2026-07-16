@@ -128,6 +128,7 @@ describe PerpLiquidation::BinanceFuturesMarketDataClient do
       'DATABASE_URL' => 'mysql2://db', 'REDIS_URL' => 'redis://redis',
       'ORDER_SERVICE_URL' => 'http://orders', 'POSITION_SERVICE_URL' => 'http://positions',
       'ACCOUNT_SERVICE_URL' => 'http://accounts', 'RISK_SERVICE_URL' => 'http://risk',
+      'APPROVAL_SERVICE_URL' => 'http://approvals',
       'SERVICE_TOKEN' => 'token', 'MARKET_DATA_PROVIDER' => 'binance'
     }
     application = PerpLiquidation::Application.allocate
@@ -147,6 +148,7 @@ describe PerpLiquidation::BinanceFuturesMarketDataClient do
       'DATABASE_URL' => 'mysql2://db', 'REDIS_URL' => 'redis://redis',
       'ORDER_SERVICE_URL' => 'http://orders', 'POSITION_SERVICE_URL' => 'http://positions',
       'ACCOUNT_SERVICE_URL' => 'http://accounts', 'RISK_SERVICE_URL' => 'http://risk',
+      'APPROVAL_SERVICE_URL' => 'http://approvals',
       'MARKET_DATA_SERVICE_URL' => 'http://market-data', 'SERVICE_TOKEN' => 'token',
       'MARKET_DATA_PROVIDER' => 'internal', 'BINANCE_REFERENCE_ENABLED' => 'true'
     }
@@ -166,6 +168,7 @@ describe PerpLiquidation::BinanceFuturesMarketDataClient do
       'DATABASE_URL' => 'mysql2://db', 'REDIS_URL' => 'redis://redis',
       'ORDER_SERVICE_URL' => 'http://orders', 'POSITION_SERVICE_URL' => 'http://positions',
       'ACCOUNT_SERVICE_URL' => 'http://accounts', 'RISK_SERVICE_URL' => 'http://risk',
+      'APPROVAL_SERVICE_URL' => 'http://approvals',
       'MARKET_DATA_SERVICE_URL' => 'http://market-data', 'SERVICE_TOKEN' => 'token',
       'BINANCE_REFERENCE_ENABLED' => 'true', 'BINANCE_REFERENCE_MAX_DEVIATION' => '1'
     }

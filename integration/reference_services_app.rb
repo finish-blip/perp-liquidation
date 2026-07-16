@@ -48,6 +48,7 @@ module PerpLiquidation
         return fill_order(env, path) if method == 'POST' && path.match?(%r{\A/api/v1/internal/integration/orders/[^/]+/fill\z})
         return receive_risk_result(env) if method == 'POST' && path == '/api/v1/internal/risk/liquidation-results'
         return list_risk_results if method == 'GET' && path == '/api/v1/internal/integration/risk-results'
+        return verify_approval(env) if method == 'POST' && path == '/api/v1/internal/approvals/verify'
         return check_bankruptcy(env) if method == 'POST' && path == '/api/v1/internal/bankruptcy/checks'
         return claim_insurance(env) if method == 'POST' && path == '/api/v1/internal/insurance/claims'
         return request_adl(env) if method == 'POST' && path == '/api/v1/internal/adl/requests'
@@ -181,6 +182,14 @@ module PerpLiquidation
             raise ArgumentError, 'portfolio account not found' unless account
             unless Integer(value(account, 'version')) == Integer(body.fetch('expected_account_version'))
               raise ArgumentError, 'account version mismatch'
+            end
+            authorized_notional = BigDecimal(body.fetch('authorized_notional').to_s)
+            notional_reference_price = BigDecimal(body.fetch('notional_reference_price').to_s)
+            unless authorized_notional.positive? && notional_reference_price.positive?
+              raise ArgumentError, 'portfolio notional authorization must be positive'
+            end
+            if BigDecimal(body.fetch('quantity').to_s) * notional_reference_price > authorized_notional
+              raise ArgumentError, 'order exceeds authorized_notional'
             end
           end
 
@@ -569,6 +578,18 @@ module PerpLiquidation
           { event_id: value(row, 'event_id'), topic: value(row, 'topic'), payload: JSON.parse(value(row, 'payload').to_s) }
         end
         json(200, data: data)
+      end
+
+      def verify_approval(env)
+        body = parse_body(env)
+        fields = %w[approval_id operation_id action target_type target_id operator_id approver_id]
+        evidence = fields.each_with_object({}) { |field, result| result[field] = body.fetch(field) }
+        raise ArgumentError, 'operator and approver must be different' if evidence['operator_id'] == evidence['approver_id']
+
+        json(200, data: evidence.merge(
+          approved: true,
+          expires_at: (Time.now.utc + 300).iso8601
+        ))
       end
 
       def position_payload(row)

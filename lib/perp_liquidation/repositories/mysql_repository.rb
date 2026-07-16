@@ -107,6 +107,43 @@ module PerpLiquidation
       transaction(&block)
     end
 
+    def with_portfolio_scope_admission!(risk_unit_id:, decision_sequence:, risk_decision_id:)
+      transaction do
+        now = Time.now.utc
+        execute(<<~SQL)
+          INSERT INTO liquidation_portfolio_scope_controls (risk_unit_id, updated_at)
+          VALUES (#{quote(risk_unit_id)}, #{quote(now)})
+          ON DUPLICATE KEY UPDATE updated_at = updated_at
+        SQL
+        first(<<~SQL)
+          SELECT risk_unit_id FROM liquidation_portfolio_scope_controls
+          WHERE risk_unit_id = #{quote(risk_unit_id)}
+          FOR UPDATE
+        SQL
+
+        existing = find_portfolio_plan_by_risk_decision_id(risk_decision_id)
+        next existing if existing
+
+        latest = latest_portfolio_sequence(risk_unit_id)
+        if latest && decision_sequence <= latest
+          raise StaleDecision, "portfolio decision sequence #{decision_sequence} is not newer than #{latest}"
+        end
+        active = active_portfolio_plan_for_scope(risk_unit_id)
+        if active
+          raise PreconditionsFailed,
+                "portfolio risk unit #{risk_unit_id} already has active plan #{active.plan_id}"
+        end
+
+        result = yield
+        execute(<<~SQL)
+          UPDATE liquidation_portfolio_scope_controls
+          SET updated_at = #{quote(Time.now.utc)}
+          WHERE risk_unit_id = #{quote(risk_unit_id)}
+        SQL
+        result
+      end
+    end
+
     def with_inbox_event!(event_id, topic)
       return nil if inbox_processed?(event_id)
 
@@ -354,7 +391,7 @@ module PerpLiquidation
           SELECT task_id FROM liquidation_tasks
           WHERE status = 'PENDING'
              OR (status = 'RETRY_WAIT' AND (next_retry_at IS NULL OR next_retry_at <= UTC_TIMESTAMP(6)))
-             OR (status IN ('CLAIMED', 'LOCKING', 'VALIDATING') AND claim_expires_at <= UTC_TIMESTAMP(6))
+             OR (status IN ('CLAIMED', 'LOCKING', 'VALIDATING', 'EXECUTING') AND claim_expires_at <= UTC_TIMESTAMP(6))
           ORDER BY GREATEST(
                      0,
                      priority - FLOOR(
@@ -608,11 +645,29 @@ module PerpLiquidation
 
     def attach_order_result!(task, step:, attempt:, result:)
       transaction do
+        row = first(<<~SQL)
+          SELECT * FROM liquidation_order_attempts
+          WHERE client_order_id = #{quote(attempt.client_order_id)}
+          FOR UPDATE
+        SQL
+        raise NotFound, "order attempt #{attempt.client_order_id} not found" unless row
+
+        current = hydrate_order_attempt(row)
+        disposition = current.update_disposition(
+          status: result.status,
+          executed_quantity: result.filled_quantity,
+          event_sequence: result.event_sequence
+        )
+        unless disposition == :applied
+          raise ManualReviewRequired, "initial order result cannot be #{disposition}"
+        end
+
         execute(<<~SQL)
           UPDATE liquidation_order_attempts
           SET order_id = #{quote(result.order_id)}, status = #{quote(result.status)},
               executed_quantity = #{quote(result.filled_quantity)},
               average_price = #{quote(result.average_price)}, fee = #{quote(result.fee)},
+              last_event_sequence = #{quote(result.event_sequence || current.last_event_sequence)},
               response_payload = #{quote_json(result.snapshot)}, updated_at = #{quote(Time.now.utc)}
           WHERE client_order_id = #{quote(attempt.client_order_id)}
         SQL
@@ -1379,7 +1434,7 @@ module PerpLiquidation
             AND (
               status = 'PENDING'
               OR (status = 'RETRY_WAIT' AND (next_retry_at IS NULL OR next_retry_at <= UTC_TIMESTAMP(6)))
-              OR (status IN ('CLAIMED', 'LOCKING', 'VALIDATING') AND claim_expires_at <= UTC_TIMESTAMP(6))
+              OR (status IN ('CLAIMED', 'LOCKING', 'VALIDATING', 'EXECUTING') AND claim_expires_at <= UTC_TIMESTAMP(6))
             )
           FOR UPDATE
         SQL
@@ -1393,7 +1448,7 @@ module PerpLiquidation
           task.transition_to!(Liquidation::PENDING)
           insert_event!(task, 'RETRY_READY', from_status: from_status, to_status: task.status)
         end
-        if %w[CLAIMED LOCKING VALIDATING].include?(task.status)
+        if %w[CLAIMED LOCKING VALIDATING EXECUTING].include?(task.status)
           previous_worker = task.claimed_by
           from_status = task.status
           task.transition_to!(Liquidation::PENDING)

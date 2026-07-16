@@ -9,7 +9,9 @@ module PerpLiquidation
         Liquidation::PARTIALLY_FILLED
       ].freeze
       SETTLEMENT_STATES = [Liquidation::FILLED, Liquidation::SETTLEMENT_PENDING].freeze
-      RECOVERABLE_STATES = (ORDER_STATES + SETTLEMENT_STATES + [Liquidation::RESULT_PUBLISHING]).freeze
+      RECOVERABLE_STATES = (
+        ORDER_STATES + SETTLEMENT_STATES + [Liquidation::SETTLED, Liquidation::RESULT_PUBLISHING]
+      ).freeze
 
       def initialize(repository:, orchestrator:, position_client:, scanner: nil)
         @repository = repository
@@ -19,6 +21,7 @@ module PerpLiquidation
           repository: repository, orchestrator: orchestrator, position_client: position_client
         )
         @outbox_reconciler = Reconciliation::OutboxReconciler.new(repository: repository)
+        @completion_reconciler = Reconciliation::CompletionReconciler.new(orchestrator: orchestrator)
         @metrics = nil
       end
 
@@ -65,6 +68,8 @@ module PerpLiquidation
           ['SETTLEMENT_RECONCILIATION', @settlement_reconciler]
         elsif task.status == Liquidation::RESULT_PUBLISHING
           ['OUTBOX_RECONCILIATION', @outbox_reconciler]
+        elsif task.status == Liquidation::SETTLED
+          ['COMPLETION_RECONCILIATION', @completion_reconciler]
         else
           raise InvalidTransition, "task #{task.task_id} in #{task.status} is not reconcilable"
         end

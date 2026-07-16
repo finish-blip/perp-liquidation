@@ -117,6 +117,17 @@ describe PerpLiquidation::Workers::ReconciliationWorker do
     expect(task.status).to eq(PerpLiquidation::Liquidation::COMPLETED)
   end
 
+  it 'finishes a task that crashed after settlement but before result creation' do
+    task = receiver.call(command_payload)
+    task.status = PerpLiquidation::Liquidation::SETTLED
+    task.updated_at = Time.now.utc - 60
+
+    recovery_worker.perform
+
+    expect(task.status).to eq(PerpLiquidation::Liquidation::COMPLETED)
+    expect(repository.pending_outbox.map(&:task_id)).to include(task.task_id)
+  end
+
   it 'uses the adaptive child-order timeout instead of the static reconciliation age' do
     now = Time.now.utc
     task = receiver.call(command_payload(

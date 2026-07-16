@@ -47,8 +47,9 @@ module PerpLiquidation
           if method == 'GET' && path == '/api/v1/internal/liquidation/reconciliation/outbox/dead-letters'
             return list_outbox_dead_letters(env)
           end
-          return reconcile_task(path) if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/tasks/[^/]+/reconcile\z})
-          return replay_outbox(path) if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/tasks/[^/]+/replay-outbox\z})
+          if method == 'POST' && path.match?(%r{\A/api/v1/internal/liquidation/tasks/[^/]+/(?:reconcile|replay-outbox)\z})
+            return controlled_operation_required
+          end
           return list_tasks(env) if method == 'GET' && path == '/api/v1/internal/liquidation/tasks'
 
           show_task(method, path)
@@ -97,6 +98,10 @@ module PerpLiquidation
       end
 
       def cancel_portfolio_plan(_env, _path)
+        controlled_operation_required
+      end
+
+      def controlled_operation_required
         json(
           403,
           error: 'dual_approval_required',
@@ -219,35 +224,6 @@ module PerpLiquidation
 
         events = repository.dead_letter_outbox(limit: limit)
         json(200, data: events.map { |event| LiquidationSerializer.normalize(event.to_h) })
-      end
-
-      def reconcile_task(path)
-        return json(503, error: 'reconciliation_worker_unavailable') unless reconciliation_worker
-
-        task_id = path.split('/')[-2]
-        task = repository.find!(task_id)
-        unless Workers::ReconciliationWorker::RECOVERABLE_STATES.include?(task.status)
-          raise InvalidCommand, "task #{task.task_id} in #{task.status} is not reconcilable"
-        end
-
-        reconciliation_worker.reconcile(task)
-        json(
-          202,
-          data: LiquidationSerializer.call(task),
-          issues: repository.reconciliation_issues(task_id: task.task_id).map do |issue|
-            LiquidationSerializer.normalize(issue.snapshot)
-          end
-        )
-      end
-
-      def replay_outbox(path)
-        task_id = path.split('/')[-2]
-        task = repository.find!(task_id)
-        replayed = repository.replay_outbox_for_task!(task.task_id)
-        raise NotFound, "task #{task.task_id} has no outbox events" if replayed.zero?
-
-        repository.append_event!(task, 'OUTBOX_REPLAY_REQUESTED', replayed_events: replayed)
-        json(202, data: LiquidationSerializer.call(task), replayed_events: replayed)
       end
 
       def show_task(method, path)

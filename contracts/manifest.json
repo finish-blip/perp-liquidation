@@ -46,9 +46,9 @@
     {
       "topic": "liquidation.reconcile.requested",
       "direction": "inbound",
-      "schema_version": 1,
-      "schema": "schemas/liquidation-reconcile-requested-v1.json",
-      "examples": ["examples/liquidation-reconcile-requested-v1.json"],
+      "schema_version": 2,
+      "schema": "schemas/liquidation-reconcile-requested-v2.json",
+      "examples": ["examples/liquidation-reconcile-requested-v2.json"],
       "owner": "operations"
     },
     {

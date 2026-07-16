@@ -34,11 +34,12 @@ Operations:
 
 ```http
 GET  /api/v1/internal/liquidation/reconciliation/outbox/dead-letters
-POST /api/v1/internal/liquidation/tasks/{taskId}/replay-outbox
+POST /api/v1/internal/liquidation/operator-actions
 ```
 
 Replay resets attempts, locks, backoff, and dead-letter state while preserving
-the original event ID.
+the original event ID. Use `action=REPLAY_OUTBOX`; direct replay endpoints are
+blocked and production mode verifies the approval through `APPROVAL_SERVICE_URL`.
 
 ## Metrics
 

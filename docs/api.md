@@ -552,11 +552,14 @@ GET /api/v1/internal/liquidation/portfolio-plans/by-risk-decision/{riskDecisionI
   "portfolio_plan_id": "portfolio_20260715_001",
   "plan_item_sequence": 1,
   "authorized_notional": "60000",
+  "notional_reference_price": "54200",
   "expected_account_version": 88
 }
 ```
 
-订单/结算服务必须原子校验 `expected_account_version`。结算确认必须返回：
+清算引擎要求 `target_quantity * risk_snapshot.mark_price <= authorized_notional`，
+并把同一 `mark_price` 作为 `notional_reference_price` 传给订单服务。订单服务必须再次校验
+该名义价值边界，并原子校验 `expected_account_version`。结算确认必须返回：
 
 ```json
 {

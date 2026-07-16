@@ -32,6 +32,7 @@ perp-liquidation/
       006_add_execution_protection.sql
       007_add_adaptive_execution.sql
       008_add_portfolio_liquidation.sql
+      009_add_portfolio_scope_controls.sql
     integration/
       001_create_reference_service_tables.sql
       002_create_loss_mitigation_reference_tables.sql
@@ -198,6 +199,7 @@ REDIS_URL
 ORDER_SERVICE_URL
 POSITION_SERVICE_URL
 ACCOUNT_SERVICE_URL
+APPROVAL_SERVICE_URL
 MARKET_DATA_SERVICE_URL
 RISK_SERVICE_URL
 SERVICE_TOKEN

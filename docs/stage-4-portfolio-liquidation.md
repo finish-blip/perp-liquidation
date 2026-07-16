@@ -90,6 +90,9 @@ POST /api/v1/internal/liquidation/portfolio-plans
 - 可选 STATIC/ADAPTIVE 执行策略。
 - 风控决策时的仓位和行情快照。
 
+每项必须满足 `target_quantity * risk_snapshot.mark_price <= authorized_notional`。
+清算订单携带 `authorized_notional` 和 `notional_reference_price`，订单服务必须在接单时重复校验。
+
 ## 4. 数据结构
 
 阶段四迁移：
@@ -117,6 +120,9 @@ portfolio_plan_id
 plan_item_sequence
 authorized_notional
 ```
+
+`db/migrations/009_add_portfolio_scope_controls.sql` 增加账户作用域准入控制行，
+用于在 MySQL 事务中串行化同一账户的组合计划接收。
 
 `execution_scope_id` 对组合计划中的所有子任务都等于父级账户风险单元，保证同一账户结算币种下不会并行执行两个计划项。
 
@@ -195,6 +201,9 @@ CANCEL_PORTFOLIO_PLAN
 RECONCILE_TASK
 REPLAY_OUTBOX
 ```
+
+生产模式通过 `APPROVAL_SERVICE_URL` 验证审批号、操作、目标、操作人、审批人和有效期。
+旧的任务级 `/reconcile`、`/replay-outbox` 端点固定返回 `403`。
 
 每次操作要求：
 

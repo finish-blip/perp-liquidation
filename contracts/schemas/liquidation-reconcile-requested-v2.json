@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.example.internal/perp-liquidation/liquidation-reconcile-requested-v2.json",
+  "title": "liquidation.reconcile.requested v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "operation_id", "action", "target_type", "target_id",
+    "operator_id", "approver_id", "approval_id", "reason"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "operation_id": { "type": "string", "minLength": 1 },
+    "action": { "const": "RECONCILE_TASK" },
+    "target_type": { "const": "TASK" },
+    "target_id": { "type": "string", "minLength": 1 },
+    "operator_id": { "type": "string", "minLength": 1 },
+    "approver_id": { "type": "string", "minLength": 1 },
+    "approval_id": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "requested_by": { "type": "string", "minLength": 1 }
+  }
+}

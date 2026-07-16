@@ -9,6 +9,7 @@ module PerpLiquidation
         Liquidation::PARTIALLY_FILLED => 30,
         Liquidation::FILLED => 15,
         Liquidation::SETTLEMENT_PENDING => 30,
+        Liquidation::SETTLED => 15,
         Liquidation::RESULT_PUBLISHING => 15
       }.freeze
 

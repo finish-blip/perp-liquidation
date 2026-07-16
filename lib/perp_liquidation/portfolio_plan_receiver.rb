@@ -14,21 +14,15 @@ module PerpLiquidation
       existing = @repository.find_portfolio_plan_by_risk_decision_id(command.risk_decision_id)
       return existing if existing
 
-      latest = @repository.latest_portfolio_sequence(command.risk_unit_id)
-      if latest && command.decision_sequence <= latest
-        raise StaleDecision, "portfolio decision sequence #{command.decision_sequence} is not newer than #{latest}"
-      end
-      active = @repository.active_portfolio_plan_for_scope(command.risk_unit_id)
-      if active
-        raise PreconditionsFailed,
-              "portfolio risk unit #{command.risk_unit_id} already has active plan #{active.plan_id}"
-      end
-
       account = @account_client.find(account_id: command.account_id)
       validate_account!(command, account)
 
       child_commands = command.child_commands
-      @repository.with_transaction do
+      @repository.with_portfolio_scope_admission!(
+        risk_unit_id: command.risk_unit_id,
+        decision_sequence: command.decision_sequence,
+        risk_decision_id: command.risk_decision_id
+      ) do
         plan = @repository.create_portfolio_plan!(command)
         command.items.zip(child_commands).each_with_index do |(item, child_command), index|
           task = @repository.create_from_command!(child_command)

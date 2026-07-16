@@ -4,10 +4,11 @@ module PerpLiquidation
   class OperatorActionService
     ACTIONS = %w[CANCEL_PORTFOLIO_PLAN RECONCILE_TASK REPLAY_OUTBOX].freeze
 
-    def initialize(repository:, portfolio_plan_receiver:, reconciliation_worker:)
+    def initialize(repository:, portfolio_plan_receiver:, reconciliation_worker:, approval_client:)
       @repository = repository
       @portfolio_plan_receiver = portfolio_plan_receiver
       @reconciliation_worker = reconciliation_worker
+      @approval_client = approval_client
     end
 
     def call(payload)
@@ -15,9 +16,14 @@ module PerpLiquidation
       existing = @repository.operator_action(attributes.fetch(:operation_id))
       return existing if existing
 
+      approval = @approval_client.verify!(attributes)
       action_record = @repository.create_operator_action!(attributes)
       result = execute(attributes)
-      @repository.complete_operator_action!(action_record, status: 'COMPLETED', result: result)
+      @repository.complete_operator_action!(
+        action_record,
+        status: 'COMPLETED',
+        result: result.merge(approval: approval)
+      )
     rescue StandardError => e
       if defined?(action_record) && action_record
         @repository.complete_operator_action!(

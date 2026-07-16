@@ -55,6 +55,21 @@ describe 'Production scheduling and delivery' do
     expect(repository.events_for(task.task_id).map(&:event_type)).to include('EXPIRED_CLAIM_RECOVERED')
   end
 
+  it 'recovers an expired task that crashed after entering execution' do
+    task = receiver.call(command_payload)
+    repository.claim_next_task!(worker_id: 'worker-dead')
+    repository.transition!(task, PerpLiquidation::Liquidation::LOCKING, 'TEST_LOCKING')
+    repository.transition!(task, PerpLiquidation::Liquidation::VALIDATING, 'TEST_VALIDATING')
+    repository.transition!(task, PerpLiquidation::Liquidation::EXECUTING, 'TEST_EXECUTING')
+    task.claim_expires_at = Time.now.utc - 1
+
+    reclaimed = repository.claim_next_task!(worker_id: 'worker-live')
+
+    expect(reclaimed).to equal(task)
+    expect(task.status).to eq(PerpLiquidation::Liquidation::CLAIMED)
+    expect(task.claimed_by).to eq('worker-live')
+  end
+
   it 'persists one active risk-unit owner and advances the fencing token across owners' do
     first_token = repository.acquire_risk_unit_lease!(
       risk_unit_id: 'position:lease', owner_task_id: 'task-1', fencing_token: 1, lease_seconds: 30

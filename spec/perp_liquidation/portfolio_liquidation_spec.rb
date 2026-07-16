@@ -67,6 +67,14 @@ RSpec.describe 'Portfolio liquidation plans' do
       .to raise_error(PerpLiquidation::InvalidCommand, /notionals exceed/)
   end
 
+  it 'rejects a plan item whose target notional exceeds its authorization' do
+    payload = portfolio_command_payload
+    payload[:items][0][:authorized_notional] = '500'
+
+    expect { PerpLiquidation::PortfolioLiquidationCommand.from_hash(payload) }
+      .to raise_error(PerpLiquidation::InvalidCommand, /exceeds authorized_notional/)
+  end
+
   it 'creates child tasks atomically and activates only the first item' do
     plan = receiver.call(portfolio_command_payload)
     duplicate = receiver.call(portfolio_command_payload)
@@ -79,6 +87,32 @@ RSpec.describe 'Portfolio liquidation plans' do
       .to eq(%w[PENDING PLAN_WAITING])
   end
 
+  it 'admits only one concurrent portfolio plan for an account scope' do
+    payloads = [
+      portfolio_command_payload,
+      portfolio_command_payload(
+        plan_id: 'portfolio_plan_202', risk_decision_id: 'portfolio_risk_202', decision_sequence: 202
+      )
+    ]
+    gate = Queue.new
+    results = Queue.new
+    threads = payloads.map do |payload|
+      Thread.new do
+        gate.pop
+        results << receiver.call(payload)
+      rescue StandardError => e
+        results << e
+      end
+    end
+    threads.length.times { gate << true }
+    threads.each(&:join)
+    outcomes = threads.length.times.map { results.pop }
+
+    expect(repository.portfolio_plans.size).to eq(1)
+    expect(outcomes.count { |outcome| outcome.is_a?(PerpLiquidation::PortfolioLiquidationPlan) }).to eq(1)
+    expect(outcomes.count { |outcome| outcome.is_a?(StandardError) }).to eq(1)
+  end
+
   it 'executes portfolio items serially under one account fencing scope and publishes one parent result' do
     plan = receiver.call(portfolio_command_payload)
     items = repository.portfolio_plan_items_for(plan.plan_id)
@@ -89,6 +123,8 @@ RSpec.describe 'Portfolio liquidation plans' do
     first_order = order_client.submitted_orders.values.last
     expect(first_order.payload[:risk_unit_id]).to eq(plan.risk_unit_id)
     expect(first_order.payload[:expected_account_version]).to eq(88)
+    expect(first_order.payload[:authorized_notional]).to eq('60000.0')
+    expect(first_order.payload[:notional_reference_price]).to eq('54200')
     orchestrator.handle_order_event(
       event_id: 'portfolio_fill_1', order_id: first_order.order_id, status: 'FILLED',
       order_event_sequence: 1, filled_quantity: '0.01', average_price: '54180'
@@ -139,6 +175,35 @@ RSpec.describe 'Portfolio liquidation plans' do
       .to eq(%w[COMPLETED COMPLETED])
   end
 
+  it 'renews the durable lease with the shared account execution scope' do
+    payload = portfolio_command_payload
+    payload[:items] = [payload[:items].first]
+    plan = receiver.call(payload)
+    task = repository.find!(repository.portfolio_plan_items_for(plan.plan_id).first.task_id)
+    renewing_lock_manager = Class.new do
+      def with_lock(risk_unit_id:, owner:, on_renew: nil)
+        result = yield 1
+        on_renew&.call
+        result
+      end
+    end.new
+    renewing_orchestrator = PerpLiquidation::Orchestrator.new(
+      repository: repository,
+      order_client: order_client,
+      position_client: position_client,
+      market_data_client: market_data_client,
+      portfolio_plan_coordinator: coordinator,
+      risk_unit_lock_manager: renewing_lock_manager
+    )
+
+    PerpLiquidation::Workers::LiquidationWorker.new(
+      repository: repository, orchestrator: renewing_orchestrator
+    ).perform_once
+
+    expect(task.status).to eq(PerpLiquidation::Liquidation::ORDER_ACCEPTED)
+    expect(task.error_code).to be_nil
+  end
+
   it 'stops the plan and skips later items when the current item fails' do
     position_client.put(position_snapshot(version: 41))
     plan = receiver.call(portfolio_command_payload)
@@ -175,7 +240,8 @@ RSpec.describe 'Portfolio liquidation plans' do
     service = PerpLiquidation::OperatorActionService.new(
       repository: repository,
       portfolio_plan_receiver: receiver,
-      reconciliation_worker: reconciliation_worker
+      reconciliation_worker: reconciliation_worker,
+      approval_client: PerpLiquidation::FakeApprovalClient.new
     )
     payload = {
       operation_id: 'operator_cancel_plan_1',
@@ -200,6 +266,30 @@ RSpec.describe 'Portfolio liquidation plans' do
     expect do
       service.call(payload.merge(operation_id: 'operator_cancel_plan_2', approver_id: 'operator-a'))
     end.to raise_error(PerpLiquidation::InvalidCommand, /must be different/)
+  end
+
+  it 'does not execute an operator action when the approval service rejects it' do
+    plan = receiver.call(portfolio_command_payload)
+    reconciliation_worker = PerpLiquidation::Workers::ReconciliationWorker.new(
+      repository: repository, orchestrator: orchestrator, position_client: position_client
+    )
+    service = PerpLiquidation::OperatorActionService.new(
+      repository: repository,
+      portfolio_plan_receiver: receiver,
+      reconciliation_worker: reconciliation_worker,
+      approval_client: PerpLiquidation::FakeApprovalClient.new(approved: false)
+    )
+
+    expect do
+      service.call(
+        operation_id: 'operator_cancel_rejected', action: 'CANCEL_PORTFOLIO_PLAN',
+        target_type: 'PORTFOLIO_PLAN', target_id: plan.plan_id,
+        operator_id: 'operator-a', approver_id: 'operator-b',
+        approval_id: 'approval-rejected', reason: 'maintenance'
+      )
+    end.to raise_error(PerpLiquidation::PreconditionsFailed, /not approved/)
+    expect(plan.status).to eq('EXECUTING')
+    expect(repository.operator_action('operator_cancel_rejected')).to be_nil
   end
 
   it 'keeps every pre-execution cancellable state aligned with the task state machine' do

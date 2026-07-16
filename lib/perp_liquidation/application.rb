@@ -7,7 +7,7 @@ module PerpLiquidation
   class Application
     REAL_REQUIRED_ENV = %w[
       DATABASE_URL REDIS_URL ORDER_SERVICE_URL POSITION_SERVICE_URL
-      ACCOUNT_SERVICE_URL RISK_SERVICE_URL SERVICE_TOKEN
+      ACCOUNT_SERVICE_URL RISK_SERVICE_URL APPROVAL_SERVICE_URL SERVICE_TOKEN
     ].freeze
     MARKET_DATA_PROVIDERS = %w[internal binance].freeze
 
@@ -15,7 +15,7 @@ module PerpLiquidation
                 :recovery_worker, :reconciliation_worker, :outbox_dispatcher,
                 :loss_mitigation_worker, :order_client, :position_client,
                 :account_client, :market_data_client, :loss_mitigation_client, :metrics, :event_stream_consumer,
-                :portfolio_plan_receiver, :portfolio_plan_coordinator, :operator_action_service
+                :portfolio_plan_receiver, :portfolio_plan_coordinator, :operator_action_service, :approval_client
 
     def initialize(env: ENV)
       @env = env
@@ -30,6 +30,7 @@ module PerpLiquidation
       @account_client = build_account_client
       @market_data_client = build_market_data_client
       @loss_mitigation_client = build_loss_mitigation_client
+      @approval_client = build_approval_client
       @portfolio_plan_receiver = PortfolioPlanReceiver.new(
         repository: repository,
         account_client: account_client,
@@ -62,7 +63,8 @@ module PerpLiquidation
       @operator_action_service = OperatorActionService.new(
         repository: repository,
         portfolio_plan_receiver: portfolio_plan_receiver,
-        reconciliation_worker: reconciliation_worker
+        reconciliation_worker: reconciliation_worker,
+        approval_client: approval_client
       )
       @loss_mitigation_worker = Workers::LossMitigationWorker.new(
         repository: repository, orchestrator: orchestrator
@@ -175,6 +177,16 @@ module PerpLiquidation
       )
     end
 
+    def build_approval_client
+      return FakeApprovalClient.new unless real_mode?
+
+      ApprovalHttpClient.new(
+        endpoint: @env.fetch('APPROVAL_SERVICE_URL'),
+        token: @env['SERVICE_TOKEN'],
+        **http_timeout_options
+      )
+    end
+
     def build_market_data_client
       return FakeMarketDataClient.new unless real_mode?
 
@@ -242,7 +254,8 @@ module PerpLiquidation
         command_receiver: command_receiver,
         portfolio_plan_receiver: portfolio_plan_receiver,
         orchestrator: orchestrator,
-        reconciliation_worker: reconciliation_worker
+        reconciliation_worker: reconciliation_worker,
+        operator_action_service: operator_action_service
       )
       router.repository = repository
       Messaging::RedisStreamConsumer.new(
@@ -251,7 +264,8 @@ module PerpLiquidation
         topics: Messaging::EventRouter::TOPICS,
         group: @env.fetch('EVENT_STREAM_GROUP', 'perp-liquidation'),
         consumer: @env.fetch('EVENT_STREAM_CONSUMER', 'perp-liquidation-1'),
-        max_delivery_attempts: Integer(@env.fetch('EVENT_STREAM_MAX_ATTEMPTS', '5'))
+        max_delivery_attempts: Integer(@env.fetch('EVENT_STREAM_MAX_ATTEMPTS', '5')),
+        claim_idle_ms: Integer(@env.fetch('EVENT_STREAM_CLAIM_IDLE_MS', '30000'))
       )
     end
 

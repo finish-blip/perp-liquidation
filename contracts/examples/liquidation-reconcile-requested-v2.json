@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "operation_id": "reconcile_liq_risk_20260716_000103",
+  "action": "RECONCILE_TASK",
+  "target_type": "TASK",
+  "target_id": "liq_risk_20260716_000103",
+  "operator_id": "operator-a",
+  "approver_id": "operator-b",
+  "approval_id": "approval-reconcile-103",
+  "reason": "missed settlement event",
+  "requested_by": "reconciliation-scheduler"
+}

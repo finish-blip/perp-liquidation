@@ -43,7 +43,7 @@ module PerpLiquidation
         next unless lease_token
 
         @repository.renew_risk_unit_lease!(
-          risk_unit_id: task.risk_unit_id,
+          risk_unit_id: task.execution_scope_id,
           owner_task_id: task.task_id,
           fencing_token: lease_token,
           lease_seconds: @risk_unit_lease_seconds
@@ -274,6 +274,15 @@ module PerpLiquidation
         account_version: account_version,
         source: 'RECONCILIATION'
       )
+    end
+
+    def recover_settled_completion(task)
+      unless task.status == Liquidation::SETTLED
+        raise InvalidTransition, "task #{task.task_id} is not settled"
+      end
+
+      complete!(task)
+      task
     end
 
     def process_loss_mitigation(task)
@@ -598,9 +607,12 @@ module PerpLiquidation
       attributes.merge!(execution_protection) if execution_protection
       if task.portfolio_plan_id
         plan = @repository.find_portfolio_plan!(task.portfolio_plan_id)
+        snapshot = @repository.risk_snapshot_for(task.task_id) || {}
         attributes.merge!(
           portfolio_plan_id: task.portfolio_plan_id,
           plan_item_sequence: task.plan_item_sequence,
+          authorized_notional: task.authorized_notional.to_s('F'),
+          notional_reference_price: fetch(snapshot, :mark_price).to_s,
           expected_account_version: plan.current_account_version
         )
       end
