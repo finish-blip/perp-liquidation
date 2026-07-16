@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'bigdecimal'
 require 'uri'
 
 module PerpLiquidation
@@ -177,17 +178,33 @@ module PerpLiquidation
     def build_market_data_client
       return FakeMarketDataClient.new unless real_mode?
 
+      execution_client = build_execution_market_data_client
+      return execution_client unless binance_reference_enabled?
+
+      ReferenceCheckedMarketDataClient.new(
+        execution_client: execution_client,
+        reference_client: build_binance_market_data_client,
+        max_deviation: @env.fetch('BINANCE_REFERENCE_MAX_DEVIATION', '0.03'),
+        max_age_ms: @env.fetch('BINANCE_REFERENCE_MAX_AGE_MS', '2000')
+      )
+    end
+
+    def build_execution_market_data_client
       if market_data_provider == 'binance'
-        return BinanceFuturesMarketDataClient.new(
-          endpoint: @env.fetch('BINANCE_FUTURES_URL', BinanceFuturesMarketDataClient::DEFAULT_ENDPOINT),
-          depth_limit: Integer(@env.fetch('BINANCE_DEPTH_LIMIT', '20')),
-          exchange_info_ttl: Float(@env.fetch('BINANCE_EXCHANGE_INFO_TTL_SECONDS', '3600')),
-          **http_timeout_options
-        )
+        return build_binance_market_data_client
       end
 
       MarketDataHttpClient.new(
         endpoint: @env.fetch('MARKET_DATA_SERVICE_URL'), token: @env['SERVICE_TOKEN'], **http_timeout_options
+      )
+    end
+
+    def build_binance_market_data_client
+      BinanceFuturesMarketDataClient.new(
+        endpoint: @env.fetch('BINANCE_FUTURES_URL', BinanceFuturesMarketDataClient::DEFAULT_ENDPOINT),
+        depth_limit: Integer(@env.fetch('BINANCE_DEPTH_LIMIT', '20')),
+        exchange_info_ttl: Float(@env.fetch('BINANCE_EXCHANGE_INFO_TTL_SECONDS', '3600')),
+        **http_timeout_options
       )
     end
 
@@ -257,11 +274,34 @@ module PerpLiquidation
       @env.fetch('MARKET_DATA_PROVIDER', 'internal')
     end
 
+    def binance_reference_enabled?
+      boolean_environment_value('BINANCE_REFERENCE_ENABLED', default: false)
+    end
+
+    def boolean_environment_value(name, default:)
+      value = @env.fetch(name, default.to_s).to_s.downcase
+      return true if value == 'true'
+      return false if value == 'false'
+
+      raise InvalidCommand, "#{name} must be true or false"
+    end
+
     def validate_configuration!
       return if @data_mode == 'memory'
       raise InvalidCommand, "unsupported DATA_MODE #{@data_mode.inspect}" unless real_mode?
       unless MARKET_DATA_PROVIDERS.include?(market_data_provider)
         raise InvalidCommand, "unsupported MARKET_DATA_PROVIDER #{market_data_provider.inspect}"
+      end
+      if market_data_provider == 'binance'
+        unless boolean_environment_value('ALLOW_BINANCE_AS_EXECUTION_MARKET_DATA', default: false)
+          raise InvalidCommand,
+                'MARKET_DATA_PROVIDER=binance requires ALLOW_BINANCE_AS_EXECUTION_MARKET_DATA=true'
+        end
+        if binance_reference_enabled?
+          raise InvalidCommand, 'BINANCE_REFERENCE_ENABLED cannot be used when MARKET_DATA_PROVIDER=binance'
+        end
+      else
+        validate_binance_reference_configuration! if binance_reference_enabled?
       end
 
       required = REAL_REQUIRED_ENV.dup
@@ -270,6 +310,19 @@ module PerpLiquidation
       return if missing.empty?
 
       raise InvalidCommand, "real data mode requires: #{missing.join(', ')}"
+    end
+
+    def validate_binance_reference_configuration!
+      deviation = BigDecimal(@env.fetch('BINANCE_REFERENCE_MAX_DEVIATION', '0.03').to_s)
+      age_ms = Integer(@env.fetch('BINANCE_REFERENCE_MAX_AGE_MS', '2000'))
+      unless deviation.positive? && deviation < 1
+        raise InvalidCommand, 'BINANCE_REFERENCE_MAX_DEVIATION must be between 0 and 1'
+      end
+      unless age_ms.between?(1, 60_000)
+        raise InvalidCommand, 'BINANCE_REFERENCE_MAX_AGE_MS must be between 1 and 60000'
+      end
+    rescue ArgumentError, TypeError => e
+      raise InvalidCommand, "invalid Binance reference market data configuration: #{e.message}"
     end
   end
 end

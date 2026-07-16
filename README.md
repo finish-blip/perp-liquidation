@@ -76,16 +76,20 @@ ruby bin/portfolio_mode_smoke
 
 完整组件场景矩阵使用 `component-smoke` profile，命令和报告位置见 [`docs/testing.md`](docs/testing.md)。
 
-只接入 Binance USD-M 永续合约公开行情时，不需要 API Key。设置：
+推荐保留内部撮合盘口作为执行权威，并启用 Binance USD-M 公开行情做外部偏离保护：
 
 ```bash
-MARKET_DATA_PROVIDER=binance
+MARKET_DATA_PROVIDER=internal
+MARKET_DATA_SERVICE_URL=http://127.0.0.1:3104
+BINANCE_REFERENCE_ENABLED=true
+BINANCE_REFERENCE_MAX_DEVIATION=0.03
+BINANCE_REFERENCE_MAX_AGE_MS=2000
 BINANCE_FUTURES_URL=https://fapi.binance.com
 BINANCE_DEPTH_LIMIT=20
 BINANCE_EXCHANGE_INFO_TTL_SECONDS=3600
 ```
 
-该模式直接读取 Binance 深度和交易规则，`MARKET_DATA_SERVICE_URL` 不再必填。可以在不启动数据库、Redis 和真实模式容器的情况下单独验证：
+该模式只把 Binance 用作参考，不会用其深度替代内部撮合盘口，也不需要 API Key。完整边界、失败语义和直连确认见 [`docs/market-data-boundary.md`](docs/market-data-boundary.md)。可以单独验证 Binance 公共 REST 数据：
 
 ```bash
 ruby bin/binance_market_data_smoke BTCUSDT

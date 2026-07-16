@@ -12,6 +12,8 @@ module PerpLiquidation
   class PreconditionsFailed < Error; end
   class RetryableError < Error; end
   class PriceProtectionBreached < RetryableError; end
+  class ReferenceMarketDataUnavailable < RetryableError; end
+  class ReferencePriceDivergence < RetryableError; end
   class ExecutionDeferred < RetryableError; end
   class InsufficientMarketLiquidity < ExecutionDeferred; end
   class ExecutionBackpressure < ExecutionDeferred; end

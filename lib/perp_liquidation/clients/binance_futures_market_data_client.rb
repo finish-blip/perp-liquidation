@@ -2,6 +2,7 @@
 
 require 'faraday'
 require 'json'
+require 'bigdecimal'
 
 module PerpLiquidation
   class BinanceFuturesMarketDataClient
@@ -19,6 +20,7 @@ module PerpLiquidation
       @clock = clock
       @symbol_rules = nil
       @symbol_rules_expires_at = Time.at(0).utc
+      @symbol_rules_lock = Mutex.new
       @connection = connection || Faraday.new(url: endpoint) do |faraday|
         faraday.options.open_timeout = Float(open_timeout)
         faraday.options.timeout = Float(timeout)
@@ -50,7 +52,7 @@ module PerpLiquidation
     end
 
     def symbol_rule(symbol)
-      refresh_symbol_rules! if @symbol_rules.nil? || @clock.call >= @symbol_rules_expires_at
+      refresh_symbol_rules_if_needed!
       rule = @symbol_rules[symbol]
       raise PreconditionsFailed, "Binance USD-M futures symbol #{symbol} is unavailable" unless rule
       unless rule['contractType'] == 'PERPETUAL'
@@ -61,25 +63,57 @@ module PerpLiquidation
       rule
     end
 
+    def refresh_symbol_rules_if_needed!
+      return unless symbol_rules_expired?
+
+      @symbol_rules_lock.synchronize do
+        return unless symbol_rules_expired?
+
+        refresh_symbol_rules!
+      end
+    end
+
+    def symbol_rules_expired?
+      @symbol_rules.nil? || @clock.call >= @symbol_rules_expires_at
+    end
+
     def refresh_symbol_rules!
       payload = fetch_json('/fapi/v1/exchangeInfo')
       symbols = payload.fetch('symbols')
-      raise TypeError, 'symbols must be an array' unless symbols.is_a?(Array)
+      raise TypeError, 'symbols must be a non-empty array' unless symbols.is_a?(Array) && !symbols.empty?
 
-      @symbol_rules = symbols.each_with_object({}) do |item, result|
+      rules = symbols.each_with_object({}) do |item, result|
+        symbol = item.fetch('symbol').to_s
+        raise TypeError, "invalid symbol #{symbol.inspect}" unless symbol.match?(%r{\A[A-Z0-9]{2,30}\z})
+
         filters = item.fetch('filters')
-        lot_size = filters.find { |filter| filter['filterType'] == 'LOT_SIZE' }
-        next unless lot_size
+        raise TypeError, "filters for #{symbol} must be an array" unless filters.is_a?(Array)
 
-        result[item.fetch('symbol')] = {
+        lot_size = filters.find { |filter| filter['filterType'] == 'LOT_SIZE' }
+        price_filter = filters.find { |filter| filter['filterType'] == 'PRICE_FILTER' }
+        raise KeyError, "LOT_SIZE is missing for #{symbol}" unless lot_size
+        raise KeyError, "PRICE_FILTER is missing for #{symbol}" unless price_filter
+
+        result[symbol] = {
           'contractType' => item.fetch('contractType'),
           'status' => item.fetch('status'),
-          'stepSize' => lot_size.fetch('stepSize')
-        }
+          'stepSize' => positive_decimal!(lot_size.fetch('stepSize'), "#{symbol} LOT_SIZE.stepSize"),
+          'minQty' => positive_decimal!(lot_size.fetch('minQty'), "#{symbol} LOT_SIZE.minQty"),
+          'maxQty' => positive_decimal!(lot_size.fetch('maxQty'), "#{symbol} LOT_SIZE.maxQty"),
+          'tickSize' => positive_decimal!(price_filter.fetch('tickSize'), "#{symbol} PRICE_FILTER.tickSize")
+        }.freeze
       end
+      @symbol_rules = rules.freeze
       @symbol_rules_expires_at = @clock.call + @exchange_info_ttl
     rescue KeyError, TypeError, ArgumentError => e
       raise RetryableError, "invalid Binance futures exchange info: #{e.message}"
+    end
+
+    def positive_decimal!(value, label)
+      decimal = BigDecimal(value.to_s)
+      raise ArgumentError, "#{label} must be positive" unless decimal.positive?
+
+      decimal.to_s('F')
     end
 
     def build_quote(symbol, payload, quantity_increment)
@@ -88,13 +122,18 @@ module PerpLiquidation
       raise RetryableError, "Binance futures depth for #{symbol} is empty" if bids.empty? || asks.empty?
 
       timestamp_ms = payload['E'] || payload['T']
-      observed_at = timestamp_ms ? Time.at(Integer(timestamp_ms) / 1000.0).utc : @clock.call.utc
+      raise KeyError, 'E or T timestamp is missing' if timestamp_ms.nil?
+
+      sequence = Integer(payload.fetch('lastUpdateId'))
+      raise ArgumentError, 'lastUpdateId must be positive' unless sequence.positive?
+
+      observed_at = Time.at(Integer(timestamp_ms) / 1000.0).utc
       MarketQuote.new(
         symbol: symbol,
         best_bid: bids.first.fetch(:price),
         best_ask: asks.first.fetch(:price),
         observed_at: observed_at,
-        sequence: payload.fetch('lastUpdateId'),
+        sequence: sequence,
         bids: bids,
         asks: asks,
         quantity_increment: quantity_increment

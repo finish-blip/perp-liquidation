@@ -61,6 +61,7 @@ require_relative 'perp_liquidation/clients/position_http_client'
 require_relative 'perp_liquidation/clients/account_http_client'
 require_relative 'perp_liquidation/clients/market_data_http_client'
 require_relative 'perp_liquidation/clients/binance_futures_market_data_client'
+require_relative 'perp_liquidation/clients/reference_checked_market_data_client'
 require_relative 'perp_liquidation/clients/loss_mitigation_http_client'
 require_relative 'perp_liquidation/application'
 

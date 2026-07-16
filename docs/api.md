@@ -272,13 +272,18 @@ GET /api/v1/internal/market/quotes/{symbol}
 
 清算卖单使用 `best_bid`，清算买单使用 `best_ask`。行情时间超过风控授权的 `quote_max_age_ms` 时不允许下单，任务进入可重试状态。ADAPTIVE 执行还要求排序盘口和正数 `quantity_increment`。
 
-设置 `MARKET_DATA_PROVIDER=binance` 后，清算引擎使用 Binance USD-M Futures 公开接口作为该契约的数据源：
+推荐使用内部撮合行情作为该契约的执行权威，并设置 `BINANCE_REFERENCE_ENABLED=true` 使用 Binance USD-M Futures 公开行情做外部偏离保护：
 
 - `/fapi/v1/depth` 提供 bid/ask、盘口和更新序号。
-- `/fapi/v1/exchangeInfo` 提供永续合约类型、交易状态和 `LOT_SIZE.stepSize`。
+- `/fapi/v1/exchangeInfo` 提供永续合约类型、交易状态、`LOT_SIZE` 和 `PRICE_FILTER`。
 - 只接受 `contractType=PERPETUAL` 且 `status=TRADING` 的交易对。
 - `418`、`429`、服务端错误、超时、空盘口和无效响应均按可重试行情错误处理。
-- 该模式只读取公开行情，不使用 Binance API Key，也不向 Binance 提交订单。
+- 参考行情过期或与内部 best bid/ask 偏离超过配置阈值时不下单。
+- 拆单始终使用内部盘口；Binance 深度不作为内部市场可成交数量的证据。
+- `MARKET_DATA_PROVIDER=binance` 必须同时显式设置 `ALLOW_BINANCE_AS_EXECUTION_MARKET_DATA=true`，且只适用于执行场所确为 Binance 的适配架构或开发验证。
+- 两种模式都只读取公开行情，不使用 Binance API Key，也不向 Binance 提交订单。
+
+完整边界和生产 WebSocket 同步要求见 [`market-data-boundary.md`](market-data-boundary.md)。
 
 ### 3.3 提交清算订单
 
