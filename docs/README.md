@@ -15,7 +15,7 @@
 
 - [`../contracts/README.md`](../contracts/README.md)：跨模块事件与 HTTP 契约、版本规则和部署顺序。
 - [`testing.md`](testing.md)：目标运行时、本地测试、CI 和合并门禁。
-- [`security-exceptions.md`](security-exceptions.md)：受时限约束的已知安全例外和退出条件。
+- [`security-exceptions.md`](security-exceptions.md)：安全例外登记、补偿控制和关闭记录。
 - [`market-data-boundary.md`](market-data-boundary.md)：内部执行盘口与 Binance 参考行情的职责和保护配置。
 - [`execution-plans.md`](execution-plans.md)：多步骤执行计划和任务详情扩展。
 - [`loss-mitigation.md`](loss-mitigation.md)：破产价、保险基金和 ADL 编排。

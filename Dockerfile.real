@@ -1,18 +1,43 @@
-FROM quay.io/openware/peatio:2.6.48
+ARG RUBY_IMAGE=ruby:3.3-slim-bookworm@sha256:dc786a8d54e07c9d0a6654db25d7ed5b68a43a694698d0fdc0c0236750c3a01b
+
+FROM ${RUBY_IMAGE} AS builder
 
 ENV BUNDLE_APP_CONFIG=/opt/perp-liquidation/bundle-config \
     BUNDLE_PATH=/opt/perp-liquidation/bundle \
     BUNDLE_DEPLOYMENT=true \
     BUNDLE_FROZEN=true
 
-USER root
-RUN mkdir -p /workspace /opt/perp-liquidation/bundle-config /opt/perp-liquidation/bundle \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      build-essential \
+      default-libmysqlclient-dev \
+      git \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY Gemfile Gemfile.lock ./
+RUN bundle install --jobs 4 --retry 2
+
+FROM ${RUBY_IMAGE}
+
+ENV BUNDLE_APP_CONFIG=/opt/perp-liquidation/bundle-config \
+    BUNDLE_PATH=/opt/perp-liquidation/bundle \
+    BUNDLE_DEPLOYMENT=true \
+    BUNDLE_FROZEN=true
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git libmariadb3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app \
+    && useradd --system --gid app --create-home app \
+    && mkdir -p /workspace /opt/perp-liquidation/bundle-config /opt/perp-liquidation/bundle \
     && chown -R app:app /workspace /opt/perp-liquidation
+
+COPY --from=builder --chown=app:app /opt/perp-liquidation /opt/perp-liquidation
 
 USER app
 WORKDIR /workspace
-
-COPY --chown=app:app Gemfile Gemfile.lock ./
-RUN bundle install --jobs 4 --retry 2
 
 COPY --chown=app:app . ./

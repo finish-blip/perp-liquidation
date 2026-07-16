@@ -31,9 +31,6 @@ jobs:
           docker compose -f docker-compose.test.yml config --quiet
           docker compose -f docker-compose.real.yml config --quiet
 
-      - name: Pull pinned Peatio runtime
-        run: docker pull quay.io/openware/peatio:2.6.48
-
       - name: Run isolated RSpec suite
         run: docker compose -f docker-compose.test.yml run --build --rm rspec
 
@@ -55,7 +52,7 @@ jobs:
       - name: Audit locked Ruby dependencies
         run: |
           docker run --rm --user root perp-liquidation:${{ github.sha }} sh -lc \
-            "gem install bundler-audit -v 0.9.2 --no-document --bindir /usr/local/bin && bundle-audit check --update --ignore CVE-2026-47736 CVE-2026-47737"
+            "gem install bundler-audit -v 0.9.2 --no-document --bindir /usr/local/bin && bundle-audit check --update"
 
       - name: Prepare component test artifacts
         run: |

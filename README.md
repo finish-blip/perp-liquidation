@@ -46,7 +46,7 @@ risk.liquidation.command
 
 完整测试层级、CI 门禁和目标运行时见 [`docs/testing.md`](docs/testing.md)。提交和审核要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-推荐使用目标 Peatio 运行时构建镜像并隔离运行测试：
+推荐使用锁定的 Ruby 3.3 运行时构建镜像并隔离运行测试：
 
 ```bash
 docker compose -f docker-compose.test.yml run --build --rm rspec
