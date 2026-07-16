@@ -754,6 +754,7 @@ module PerpLiquidation
     def complete!(task, extra = {})
       mitigation = @repository.bankruptcy_check_for(task.task_id) ? @repository.loss_mitigation_summary(task.task_id) : {}
       payload = {
+        schema_version: 1,
         event_id: "result_#{task.task_id}",
         task_id: task.task_id,
         risk_decision_id: task.risk_decision_id,
@@ -843,6 +844,7 @@ module PerpLiquidation
 
     def failure_payload(task, retryable:)
       {
+        schema_version: 1,
         event_id: "result_#{task.task_id}", task_id: task.task_id,
         risk_decision_id: task.risk_decision_id, risk_unit_id: task.risk_unit_id,
         decision_sequence: task.decision_sequence, action: task.action,

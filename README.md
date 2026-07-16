@@ -46,13 +46,13 @@ risk.liquidation.command
 
 完整测试层级、CI 门禁和目标运行时见 [`docs/testing.md`](docs/testing.md)。提交和审核要求见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-推荐使用本机已有的 Peatio 镜像离线运行测试：
+推荐使用目标 Peatio 运行时构建镜像并隔离运行测试：
 
 ```bash
-docker compose -f docker-compose.test.yml run --rm rspec
+docker compose -f docker-compose.test.yml run --build --rm rspec
 ```
 
-该测试配置使用 `pull_policy: never`、禁用容器网络并直接使用镜像预装的 gem，不执行 `bundle install`，也不会修改宿主机依赖。也可以用现有 Ruby 环境验证纯业务逻辑：
+该命令使用 `Dockerfile.real` 构建锁定依赖，然后在禁用网络的容器中执行测试，不会修改宿主机依赖。也可以用现有 Ruby 环境验证纯业务逻辑：
 
 ```bash
 ruby -Ilib -S rspec

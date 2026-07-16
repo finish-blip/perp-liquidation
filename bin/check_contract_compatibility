@@ -1,0 +1,18 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../contracts/support/compatibility_checker'
+
+base_ref = ARGV.first
+abort 'usage: ruby bin/check_contract_compatibility <base-ref>' if base_ref.to_s.empty?
+
+checker = PerpLiquidation::Contracts::CompatibilityChecker.new(root: File.expand_path('..', __dir__))
+errors = checker.check_git_ref(base_ref)
+
+if errors.empty?
+  puts "Contract compatibility check passed against #{base_ref}."
+else
+  warn "Contract compatibility check failed against #{base_ref}:"
+  errors.each { |error| warn "- #{error}" }
+  exit 1
+end

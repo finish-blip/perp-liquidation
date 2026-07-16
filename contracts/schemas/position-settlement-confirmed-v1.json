@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.example.internal/perp-liquidation/position-settlement-confirmed-v1.json",
+  "title": "position.settlement.confirmed v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "task_id", "order_id", "position_id", "position_version"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "order_id": { "type": "string", "minLength": 1 },
+    "client_order_id": { "type": "string", "minLength": 1 },
+    "position_id": { "type": ["string", "integer"] },
+    "position_version": { "type": "integer", "minimum": 1 },
+    "account_version": { "type": "integer", "minimum": 1 },
+    "source": { "type": "string", "minLength": 1 }
+  }
+}

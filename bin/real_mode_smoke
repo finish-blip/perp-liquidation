@@ -84,7 +84,7 @@ command = {
     order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
   },
   price_protection: {
-    bankruptcy_price: '54000', max_deviation: '0.03', quote_max_age_ms: ADAPTIVE ? 60_000 : 2000
+    bankruptcy_price: '54000', max_deviation: '0.03', quote_max_age_ms: ADAPTIVE ? 60_000 : 10_000
   },
   risk_snapshot: {
     position_size: UP_TO ? '0.01' : position.fetch('size'), source: 'real-mode-smoke',

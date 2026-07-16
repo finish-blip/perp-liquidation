@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "event_id": "result_liq_risk_20260716_000103",
+  "task_id": "liq_risk_20260716_000103",
+  "risk_decision_id": "risk_20260716_000103",
+  "risk_unit_id": "position:888",
+  "decision_sequence": 103,
+  "action": "LIQUIDATE_POSITION",
+  "status": "COMPLETED",
+  "execution_priority": 10,
+  "quantity_mode": "EXACT",
+  "execution_strategy": "ADAPTIVE",
+  "execution_urgency": "NORMAL",
+  "child_order_count": 3,
+  "requested_quantity": "0.01",
+  "executed_quantity": "0.01",
+  "average_price": "54180",
+  "position_version_before": 42,
+  "position_version_after": 43,
+  "adl_triggered": false
+}

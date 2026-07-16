@@ -13,6 +13,7 @@
 
 ## 专题文档
 
+- [`../contracts/README.md`](../contracts/README.md)：跨模块事件与 HTTP 契约、版本规则和部署顺序。
 - [`testing.md`](testing.md)：目标运行时、本地测试、CI 和合并门禁。
 - [`security-exceptions.md`](security-exceptions.md)：受时限约束的已知安全例外和退出条件。
 - [`market-data-boundary.md`](market-data-boundary.md)：内部执行盘口与 Binance 参考行情的职责和保护配置。
@@ -27,14 +28,14 @@
 常用本地验证命令：
 
 ```bash
-docker compose -f docker-compose.test.yml run --rm rspec
+docker compose -f docker-compose.test.yml run --build --rm rspec
 ruby -Ilib -S rspec
 docker compose -f docker-compose.real.yml up -d
 ruby bin/real_mode_smoke
 ruby bin/portfolio_mode_smoke
 ```
 
-`docker-compose.test.yml` 只使用本机已有的 Peatio 镜像和镜像内预装 gem，禁止拉取镜像并禁用网络，不会执行 `bundle install`。仅在已经隔离好的完整依赖环境中使用：
+`docker-compose.test.yml` 使用 `Dockerfile.real` 构建锁定依赖，并在禁用网络的容器中执行测试。仅在已经隔离好的完整依赖环境中使用：
 
 ```bash
 bundle exec rspec

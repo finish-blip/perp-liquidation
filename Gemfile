@@ -13,3 +13,7 @@ gem 'rspec'
 gem 'faraday', '~> 1.10.6'
 gem 'mysql2', '~> 0.5.3'
 gem 'redis', '~> 4.1.4'
+
+group :test do
+  gem 'json_schemer', '~> 0.2.25'
+end

@@ -129,6 +129,7 @@ RSpec.describe 'Portfolio liquidation plans' do
     expect(repository.portfolio_plan_items_for(plan.plan_id).map(&:status)).to eq(%w[COMPLETED COMPLETED])
     expect(repository.pending_outbox.size).to eq(1)
     expect(repository.pending_outbox.first.payload).to include(
+      schema_version: 1,
       plan_id: plan.plan_id,
       risk_decision_id: 'portfolio_risk_201',
       status: 'COMPLETED',
@@ -166,6 +167,8 @@ RSpec.describe 'Portfolio liquidation plans' do
 
   it 'requires dual approval and audits a controlled portfolio cancellation' do
     plan = receiver.call(portfolio_command_payload)
+    first_task = repository.find!(repository.portfolio_plan_items_for(plan.plan_id).first.task_id)
+    repository.transition!(first_task, PerpLiquidation::Liquidation::CLAIMED, 'TEST_TASK_CLAIMED')
     reconciliation_worker = PerpLiquidation::Workers::ReconciliationWorker.new(
       repository: repository, orchestrator: orchestrator, position_client: position_client
     )
@@ -197,6 +200,13 @@ RSpec.describe 'Portfolio liquidation plans' do
     expect do
       service.call(payload.merge(operation_id: 'operator_cancel_plan_2', approver_id: 'operator-a'))
     end.to raise_error(PerpLiquidation::InvalidCommand, /must be different/)
+  end
+
+  it 'keeps every pre-execution cancellable state aligned with the task state machine' do
+    PerpLiquidation::PortfolioPlanCoordinator::CANCELLABLE_TASK_STATUSES.each do |status|
+      expect(PerpLiquidation::Liquidation::ALLOWED_TRANSITIONS.fetch(status))
+        .to include(PerpLiquidation::Liquidation::CANCELLED)
+    end
   end
 
   it 'routes portfolio commands through the Redis Streams event contract' do

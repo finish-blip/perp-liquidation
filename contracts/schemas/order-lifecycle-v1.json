@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.example.internal/perp-liquidation/order-lifecycle-v1.json",
+  "title": "order.lifecycle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "order_id", "status", "order_event_sequence", "filled_quantity"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "order_id": { "type": "string", "minLength": 1 },
+    "client_order_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["ACCEPTED", "PARTIALLY_FILLED", "FILLED", "REJECTED", "CANCELLED"] },
+    "order_event_sequence": { "type": "integer", "minimum": 1 },
+    "filled_quantity": { "$ref": "#/definitions/decimalString" },
+    "average_price": { "type": ["string", "null"], "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+    "fee": { "type": ["string", "null"], "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" },
+    "reason": { "type": ["string", "null"] }
+  },
+  "definitions": {
+    "decimalString": { "type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$" }
+  }
+}

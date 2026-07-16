@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "event_id": "order_event_123",
+  "order_id": "ord_123",
+  "client_order_id": "liq_risk_20260716_000103_step_1_attempt_1",
+  "status": "FILLED",
+  "order_event_sequence": 12,
+  "filled_quantity": "0.01000000",
+  "average_price": "54180",
+  "fee": "0.2"
+}

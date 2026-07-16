@@ -1,0 +1,66 @@
+{
+  "contract_set_version": 1,
+  "service": "perp-liquidation",
+  "openapi": "openapi/liquidation-internal-v1.yaml",
+  "events": [
+    {
+      "topic": "risk.liquidation.command",
+      "direction": "inbound",
+      "schema_version": 1,
+      "schema": "schemas/risk-liquidation-command-v1.json",
+      "examples": ["examples/risk-liquidation-command-v1.json"],
+      "owner": "risk"
+    },
+    {
+      "topic": "risk.liquidation.portfolio.command",
+      "direction": "inbound",
+      "schema_version": 2,
+      "schema": "schemas/risk-liquidation-portfolio-command-v2.json",
+      "examples": ["examples/risk-liquidation-portfolio-command-v2.json"],
+      "owner": "risk"
+    },
+    {
+      "topic": "order.lifecycle",
+      "direction": "inbound",
+      "schema_version": 1,
+      "schema": "schemas/order-lifecycle-v1.json",
+      "examples": ["examples/order-lifecycle-v1.json"],
+      "owner": "order"
+    },
+    {
+      "topic": "position.settlement.confirmed",
+      "direction": "inbound",
+      "schema_version": 1,
+      "schema": "schemas/position-settlement-confirmed-v1.json",
+      "examples": ["examples/position-settlement-confirmed-v1.json"],
+      "owner": "position-settlement"
+    },
+    {
+      "topic": "adl.settlement.confirmed",
+      "direction": "inbound",
+      "schema_version": 1,
+      "schema": "schemas/adl-settlement-confirmed-v1.json",
+      "examples": ["examples/adl-settlement-confirmed-v1.json"],
+      "owner": "loss-mitigation"
+    },
+    {
+      "topic": "liquidation.reconcile.requested",
+      "direction": "inbound",
+      "schema_version": 1,
+      "schema": "schemas/liquidation-reconcile-requested-v1.json",
+      "examples": ["examples/liquidation-reconcile-requested-v1.json"],
+      "owner": "operations"
+    },
+    {
+      "topic": "liquidation.execution.result",
+      "direction": "outbound",
+      "schema_version": 1,
+      "schema": "schemas/liquidation-execution-result-v1.json",
+      "examples": [
+        "examples/liquidation-execution-result-v1.json",
+        "examples/liquidation-portfolio-result-v1.json"
+      ],
+      "owner": "liquidation"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "task_id": "liq_risk_20260716_000103",
+  "reason": "missed settlement event",
+  "requested_by": "reconciliation-scheduler"
+}

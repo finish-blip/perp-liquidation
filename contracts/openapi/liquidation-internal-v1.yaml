@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: Perpetual Liquidation Internal API
+  version: 1.0.0
+  description: Internal command, event, query, reconciliation, and operator API for the liquidation engine.
+servers:
+  - url: http://perp-liquidation:9292
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Service is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service]
+                properties:
+                  status: { const: ok }
+                  service: { const: perp-liquidation }
+  /api/v1/internal/liquidation/commands:
+    post:
+      operationId: createLiquidationCommand
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/risk-liquidation-command-v1.json
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/commands/{riskDecisionId}/cancel:
+    post:
+      operationId: cancelLiquidationCommand
+      parameters:
+        - $ref: "#/components/parameters/RiskDecisionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/portfolio-plans:
+    post:
+      operationId: createPortfolioLiquidationPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/risk-liquidation-portfolio-command-v2.json
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/portfolio-plans/{planId}:
+    get:
+      operationId: getPortfolioLiquidationPlan
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/portfolio-plans/by-risk-decision/{riskDecisionId}:
+    get:
+      operationId: getPortfolioPlanByRiskDecision
+      parameters:
+        - $ref: "#/components/parameters/RiskDecisionId"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/portfolio-plans/{planId}/cancel:
+    post:
+      operationId: rejectDirectPortfolioCancellation
+      parameters:
+        - $ref: "#/components/parameters/PlanId"
+      responses:
+        "403":
+          description: Portfolio cancellation requires a dual-approved operator action.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/v1/internal/liquidation/operator-actions:
+    post:
+      operationId: createOperatorAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OperatorActionRequest" }
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/operator-actions/{operationId}:
+    get:
+      operationId: getOperatorAction
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/events/orders:
+    post:
+      operationId: consumeOrderLifecycleEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/order-lifecycle-v1.json
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/events/settlements:
+    post:
+      operationId: consumePositionSettlementEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/position-settlement-confirmed-v1.json
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/events/adl-settlements:
+    post:
+      operationId: consumeAdlSettlementEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/adl-settlement-confirmed-v1.json
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/tasks:
+    get:
+      operationId: listLiquidationTasks
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: risk_unit_id, in: query, schema: { type: string } }
+        - { name: symbol, in: query, schema: { type: string } }
+        - { name: user_id, in: query, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /api/v1/internal/liquidation/tasks/{taskId}:
+    get:
+      operationId: getLiquidationTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/tasks/by-risk-decision/{riskDecisionId}:
+    get:
+      operationId: getTaskByRiskDecision
+      parameters:
+        - $ref: "#/components/parameters/RiskDecisionId"
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/tasks/{taskId}/reconcile:
+    post:
+      operationId: reconcileLiquidationTask
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+  /api/v1/internal/liquidation/tasks/{taskId}/replay-outbox:
+    post:
+      operationId: replayLiquidationResult
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "202": { $ref: "#/components/responses/Accepted" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/internal/liquidation/reconciliation/issues:
+    get:
+      operationId: listReconciliationIssues
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: task_id, in: query, schema: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+  /api/v1/internal/liquidation/reconciliation/outbox/dead-letters:
+    get:
+      operationId: listOutboxDeadLetters
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        "200": { $ref: "#/components/responses/Ok" }
+        "422": { $ref: "#/components/responses/InvalidCommand" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    RiskDecisionId:
+      name: riskDecisionId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema: { type: string, minLength: 1 }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        message: { type: string }
+    OperatorActionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, action, target_type, target_id, operator_id, approver_id, approval_id, reason]
+      properties:
+        operation_id: { type: string, minLength: 1 }
+        action: { enum: [CANCEL_PORTFOLIO_PLAN, RECONCILE_TASK, REPLAY_OUTBOX] }
+        target_type: { enum: [PORTFOLIO_PLAN, TASK] }
+        target_id: { type: string, minLength: 1 }
+        operator_id: { type: string, minLength: 1 }
+        approver_id: { type: string, minLength: 1 }
+        approval_id: { type: string, minLength: 1 }
+        reason: { type: string, minLength: 1 }
+    GenericResponse:
+      type: object
+      additionalProperties: true
+  responses:
+    Ok:
+      description: Request completed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenericResponse" }
+    Accepted:
+      description: Request accepted for asynchronous processing.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/GenericResponse" }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: State or sequence conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCommand:
+      description: Contract or precondition validation failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

@@ -19,7 +19,7 @@ ruby -Ilib -S rspec
 使用目标 Peatio 镜像进行隔离测试：
 
 ```bash
-docker compose -f docker-compose.test.yml run --rm rspec
+docker compose -f docker-compose.test.yml run --build --rm rspec
 ```
 
 验证 Compose 文件：
@@ -59,6 +59,8 @@ docker compose -f docker-compose.real.yml --profile test down -v --remove-orphan
 4. 构建后的可部署镜像再次通过 RSpec。
 5. 当前锁文件通过 Ruby Advisory Database 审计；仅允许 [`security-exceptions.md`](security-exceptions.md) 中未过期的明确例外。
 6. Pull Request 中新增或升级的高危依赖被阻止。
+7. 所有事件示例通过 JSON Schema 和领域契约校验，OpenAPI 引用可解析。
+8. Pull Request 中既有版本的契约相对基线保持向后兼容。
 
 CI 只证明单元、契约和目标运行时兼容性。真实 MySQL、Redis、Worker、消息投递及跨模块流程由后续组件集成和端到端门禁覆盖。
 

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "event_id": "result_portfolio_portfolio_20260716_001",
+  "plan_id": "portfolio_20260716_001",
+  "risk_decision_id": "risk_portfolio_20260716_001",
+  "risk_unit_id": "account:acc_1001:settlement:USDT",
+  "decision_sequence": 201,
+  "action": "LIQUIDATE_PORTFOLIO",
+  "status": "COMPLETED",
+  "user_id": 1001,
+  "account_id": "acc_1001",
+  "account_version": 88,
+  "current_account_version": 89,
+  "margin_mode": "CROSS",
+  "execution_priority": 5,
+  "max_total_authorized_notional": "100000",
+  "failure_mode": "STOP_ON_FAILURE",
+  "item_count": 1,
+  "completed_item_count": 1,
+  "error_code": null,
+  "error_message": null,
+  "items": [
+    {
+      "item_sequence": 1,
+      "task_id": "liq_risk_portfolio_20260716_001_item_1",
+      "position_id": 888,
+      "symbol": "BTCUSDT",
+      "authorized_notional": "60000",
+      "status": "COMPLETED",
+      "executed_quantity": "0.01",
+      "average_price": "54180",
+      "position_version_before": 42,
+      "position_version_after": 43,
+      "error_code": null,
+      "error_message": null
+    }
+  ]
+}

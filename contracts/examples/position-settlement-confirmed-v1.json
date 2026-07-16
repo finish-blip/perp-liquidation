@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "event_id": "settlement_123",
+  "task_id": "liq_risk_20260716_000103",
+  "order_id": "ord_123",
+  "position_id": 888,
+  "position_version": 43,
+  "account_version": 89
+}

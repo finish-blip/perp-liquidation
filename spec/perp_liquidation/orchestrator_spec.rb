@@ -476,7 +476,7 @@ describe PerpLiquidation::Orchestrator do
     expect(repository.order_attempts_for(task.task_id).map { |attempt| attempt.requested_quantity.to_s('F') })
       .to eq(expected_quantities)
     expect(repository.pending_outbox.last.payload).to include(
-      execution_strategy: 'ADAPTIVE', child_order_count: 3
+      schema_version: 1, execution_strategy: 'ADAPTIVE', child_order_count: 3
     )
   end
 

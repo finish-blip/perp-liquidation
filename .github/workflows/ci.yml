@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validate Compose definitions
         run: |
@@ -33,10 +35,19 @@ jobs:
         run: docker pull quay.io/openware/peatio:2.6.48
 
       - name: Run isolated RSpec suite
-        run: docker compose -f docker-compose.test.yml run --rm rspec
+        run: docker compose -f docker-compose.test.yml run --build --rm rspec
 
       - name: Build deployable runtime image
         run: docker build --pull --file Dockerfile.real --tag perp-liquidation:${{ github.sha }} .
+
+      - name: Check contract backward compatibility
+        if: github.event_name == 'pull_request'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/app" \
+            -w /app \
+            perp-liquidation:${{ github.sha }} \
+            ruby bin/check_contract_compatibility "${{ github.event.pull_request.base.sha }}"
 
       - name: Test deployable runtime image
         run: docker run --rm --network none perp-liquidation:${{ github.sha }} bundle exec rake spec

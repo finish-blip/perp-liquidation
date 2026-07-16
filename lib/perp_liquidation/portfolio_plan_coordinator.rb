@@ -141,6 +141,7 @@ module PerpLiquidation
 
     def plan_result_payload(plan)
       {
+        schema_version: 1,
         event_id: "result_portfolio_#{plan.plan_id}",
         plan_id: plan.plan_id,
         risk_decision_id: plan.risk_decision_id,

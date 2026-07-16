@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://contracts.example.internal/perp-liquidation/risk-liquidation-command-v1.json",
+  "title": "risk.liquidation.command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "risk_decision_id", "risk_unit_id", "decision_sequence", "action",
+    "user_id", "account_id", "position_id", "position_version", "symbol", "position_side",
+    "expire_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "risk_decision_id": { "$ref": "#/definitions/nonEmptyString" },
+    "risk_unit_id": { "$ref": "#/definitions/nonEmptyString" },
+    "decision_sequence": { "type": "integer", "minimum": 1 },
+    "action": { "enum": ["CANCEL_RISK_ORDERS", "REDUCE_POSITION", "LIQUIDATE_POSITION"] },
+    "execution_priority": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "user_id": { "type": ["string", "integer"] },
+    "account_id": { "$ref": "#/definitions/nonEmptyString" },
+    "position_id": { "type": ["string", "integer"] },
+    "position_version": { "type": "integer", "minimum": 1 },
+    "symbol": { "type": "string", "pattern": "^[A-Z0-9]{2,30}$" },
+    "position_side": { "enum": ["LONG", "SHORT"] },
+    "instruction": { "$ref": "#/definitions/instruction" },
+    "price_protection": { "$ref": "#/definitions/priceProtection" },
+    "execution_policy": { "$ref": "#/definitions/executionPolicy" },
+    "execution_plan": { "$ref": "#/definitions/executionPlan" },
+    "risk_snapshot": { "type": "object", "additionalProperties": true },
+    "execution_scope_id": { "$ref": "#/definitions/nonEmptyString" },
+    "portfolio_plan_id": { "$ref": "#/definitions/nonEmptyString" },
+    "plan_item_sequence": { "type": "integer", "minimum": 1 },
+    "authorized_notional": { "$ref": "#/definitions/decimalString" },
+    "expire_at": { "type": "string", "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "action": { "enum": ["REDUCE_POSITION", "LIQUIDATE_POSITION"] } } },
+      "then": { "required": ["instruction"] }
+    },
+    {
+      "if": { "properties": { "action": { "const": "LIQUIDATE_POSITION" } } },
+      "then": { "required": ["price_protection", "risk_snapshot"] }
+    }
+  ],
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1, "maxLength": 255 },
+    "decimalString": {
+      "type": "string",
+      "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "instruction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_quantity", "max_executable_quantity", "order_type", "reduce_only"],
+      "properties": {
+        "target_quantity": { "$ref": "#/definitions/decimalString" },
+        "max_executable_quantity": { "$ref": "#/definitions/decimalString" },
+        "quantity_mode": { "enum": ["EXACT", "UP_TO"] },
+        "order_type": { "enum": ["MARKET", "LIMIT"] },
+        "reduce_only": { "const": true },
+        "time_in_force": { "enum": ["IOC", "FOK", "GTC"] },
+        "max_slippage": { "$ref": "#/definitions/decimalString" }
+      }
+    },
+    "priceProtection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bankruptcy_price", "max_deviation", "quote_max_age_ms"],
+      "properties": {
+        "bankruptcy_price": { "$ref": "#/definitions/decimalString" },
+        "max_deviation": { "$ref": "#/definitions/decimalString" },
+        "quote_max_age_ms": { "type": "integer", "minimum": 1, "maximum": 60000 }
+      }
+    },
+    "executionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy"],
+      "properties": {
+        "strategy": { "enum": ["STATIC", "ADAPTIVE"] },
+        "urgency": { "enum": ["NORMAL", "HIGH", "CRITICAL"] },
+        "max_child_orders": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "max_child_quantity": { "$ref": "#/definitions/decimalString" },
+        "min_child_quantity": { "$ref": "#/definitions/decimalString" },
+        "max_book_participation": { "$ref": "#/definitions/decimalString" },
+        "child_order_cooldown_ms": { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "child_order_timeout_ms": { "type": "integer", "minimum": 100, "maximum": 300000 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "strategy": { "const": "ADAPTIVE" } } },
+          "then": {
+            "required": [
+              "max_child_orders", "max_child_quantity", "min_child_quantity",
+              "max_book_participation", "child_order_cooldown_ms", "child_order_timeout_ms"
+            ]
+          }
+        }
+      ]
+    },
+    "executionPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["quantity"],
+            "properties": {
+              "quantity": { "$ref": "#/definitions/decimalString" },
+              "order_type": { "enum": ["MARKET", "LIMIT"] },
+              "time_in_force": { "enum": ["IOC", "FOK", "GTC"] },
+              "max_slippage": { "$ref": "#/definitions/decimalString" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
