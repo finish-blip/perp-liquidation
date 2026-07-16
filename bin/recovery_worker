@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../lib/perp_liquidation'
+
+application = PerpLiquidation::Application.new
+interval = Float(ENV.fetch('RECOVERY_WORKER_INTERVAL_SECONDS', '10'))
+
+loop do
+  application.recovery_worker.perform
+  sleep(interval)
+end

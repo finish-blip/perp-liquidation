@@ -1,0 +1,213 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'net/http'
+require 'time'
+require 'uri'
+
+TOKEN = ENV.fetch('SERVICE_TOKEN', 'local-integration-token')
+LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
+REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', 'http://127.0.0.1:3101')
+MULTI_STEP = ARGV.include?('--multi-step')
+RECONCILE = ARGV.include?('--reconcile')
+ADL = ARGV.include?('--adl')
+UP_TO = ARGV.include?('--up-to')
+PRICE_BLOCK = ARGV.include?('--price-block')
+ADAPTIVE_CANCEL = ARGV.include?('--adaptive-cancel')
+ADAPTIVE = ARGV.include?('--adaptive') || ADAPTIVE_CANCEL
+raise '--adaptive cannot be combined with --multi-step' if ADAPTIVE && MULTI_STEP
+
+def request(method, url, body = nil)
+  uri = URI(url)
+  request_class = { get: Net::HTTP::Get, post: Net::HTTP::Post }.fetch(method)
+  request = request_class.new(uri)
+  request['Authorization'] = "Bearer #{TOKEN}"
+  request['Content-Type'] = 'application/json'
+  request.body = JSON.generate(body) if body
+  response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(request) }
+  raise "#{method.upcase} #{url} failed: #{response.code} #{response.body}" unless response.code.to_i.between?(200, 299)
+
+  JSON.parse(response.body)
+end
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/loss-policy",
+  bankruptcy_price: ADL ? '54000' : nil,
+  bankruptcy_loss: ADL ? '10' : '0',
+  insurance_coverage_ratio: ADL ? '0.4' : '1',
+  currency: 'USDT'
+)
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/BTCUSDT",
+  best_bid: PRICE_BLOCK ? '52000' : '54190',
+  best_ask: PRICE_BLOCK ? '52010' : '54210',
+  observed_at: Time.now.utc.iso8601,
+  bids: [
+    { price: PRICE_BLOCK ? '52000' : '54190', quantity: '0.004' },
+    { price: PRICE_BLOCK ? '51990' : '54180', quantity: '0.004' },
+    { price: PRICE_BLOCK ? '51980' : '54000', quantity: '0.02' }
+  ],
+  asks: [
+    { price: PRICE_BLOCK ? '52010' : '54210', quantity: '0.004' },
+    { price: PRICE_BLOCK ? '52020' : '54220', quantity: '0.004' },
+    { price: PRICE_BLOCK ? '52030' : '55000', quantity: '0.02' }
+  ],
+  quantity_increment: '0.001'
+)
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/positions/888/reset",
+  size: UP_TO ? '0.006' : '0.01'
+)
+position = request(:get, "#{REFERENCE_URL}/api/v1/internal/positions/888").fetch('data')
+sequence = (Time.now.utc.to_f * 1_000_000).to_i
+decision_id = "risk_real_#{sequence}"
+command = {
+  schema_version: 1,
+  risk_decision_id: decision_id,
+  risk_unit_id: 'position:888',
+  decision_sequence: sequence,
+  action: 'LIQUIDATE_POSITION',
+  execution_priority: 10,
+  user_id: position.fetch('user_id'),
+  account_id: position.fetch('account_id'),
+  position_id: position.fetch('position_id'),
+  position_version: position.fetch('version'),
+  symbol: position.fetch('symbol'),
+  position_side: position.fetch('side'),
+  instruction: {
+    target_quantity: '0.01', max_executable_quantity: '0.01',
+    quantity_mode: UP_TO ? 'UP_TO' : 'EXACT',
+    order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
+  },
+  price_protection: {
+    bankruptcy_price: '54000', max_deviation: '0.03', quote_max_age_ms: ADAPTIVE ? 60_000 : 2000
+  },
+  risk_snapshot: {
+    position_size: UP_TO ? '0.01' : position.fetch('size'), source: 'real-mode-smoke',
+    market_data_timestamp: Time.now.utc.iso8601
+  },
+  expire_at: (Time.now.utc + 300).iso8601,
+  created_at: Time.now.utc.iso8601
+}
+if ADAPTIVE
+  command[:execution_policy] = {
+    strategy: 'ADAPTIVE', urgency: 'NORMAL', max_child_orders: 8,
+    max_child_quantity: '0.004', min_child_quantity: '0.001',
+    max_book_participation: '1', child_order_cooldown_ms: 0,
+    child_order_timeout_ms: ADAPTIVE_CANCEL ? 500 : 5000
+  }
+end
+if MULTI_STEP
+  command[:execution_plan] = {
+    steps: [
+      { quantity: '0.004', order_type: 'LIMIT', time_in_force: 'IOC', max_slippage: '0.002' },
+      { quantity: '0.006', order_type: 'MARKET', time_in_force: 'IOC', max_slippage: '0.005' }
+    ]
+  }
+end
+task = request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/commands", command).fetch('data')
+task_id = task.fetch('task_id')
+
+if PRICE_BLOCK
+  40.times do
+    task = request(:get, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}").fetch('data')
+    break if task['status'] == 'RETRY_WAIT'
+    sleep 0.1
+  end
+  unless task['status'] == 'RETRY_WAIT' && task['error_code'] == 'PriceProtectionBreached' && task['order_id'].nil?
+    raise "task #{task_id} was not blocked by price protection: #{task}"
+  end
+
+  request(
+    :post,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/commands/#{URI.encode_www_form_component(decision_id)}/cancel",
+    reason: 'stage2-price-protection-smoke-complete'
+  )
+  request(
+    :post,
+    "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/BTCUSDT",
+    best_bid: '54190', best_ask: '54210', observed_at: Time.now.utc.iso8601
+  )
+  puts JSON.pretty_generate(task: task, price_protection: 'BLOCKED_WITHOUT_ORDER')
+  exit 0
+end
+
+filled_order_ids = []
+adl_completed = false
+adaptive_cancel_completed = false
+120.times do
+  details = request(:get, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}")
+  task = details.fetch('data')
+  break if task['status'] == 'COMPLETED'
+
+  if ADL && task['status'] == 'ADL_SETTLEMENT_PENDING' && !adl_completed
+    adl_request_id = details.dig('loss_mitigation', 'adl_request_id')
+    raise "task #{task_id} has no ADL request id" unless adl_request_id
+
+    request(
+      :post,
+      "#{REFERENCE_URL}/api/v1/internal/integration/adl/#{URI.encode_www_form_component(adl_request_id)}/complete"
+    )
+    adl_completed = true
+  end
+
+  order_id = task['order_id']
+  if order_id && !filled_order_ids.include?(order_id) && task['status'] == 'ORDER_ACCEPTED'
+    step_number = filled_order_ids.length + 1
+    fill_payload = {
+      average_price: (54_200 - (step_number * 20)).to_s,
+      fee: MULTI_STEP ? '0.10' : '0.20',
+      publish_order_event: !RECONCILE,
+      publish_settlement_event: !RECONCILE
+    }
+    if ADAPTIVE_CANCEL && !adaptive_cancel_completed
+      fill_payload.merge!(
+        status: 'PARTIALLY_FILLED',
+        filled_quantity: '0.002',
+        order_event_sequence: 1,
+        publish_order_event: true,
+        publish_settlement_event: false
+      )
+    end
+    request(
+      :post,
+      "#{REFERENCE_URL}/api/v1/internal/integration/orders/#{URI.encode_www_form_component(order_id)}/fill",
+      fill_payload
+    )
+    filled_order_ids << order_id
+    if ADAPTIVE_CANCEL && !adaptive_cancel_completed
+      sleep 0.75
+      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+      adaptive_cancel_completed = true
+    elsif RECONCILE
+      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+      request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}/reconcile")
+    end
+  end
+  sleep 0.25
+end
+raise "task #{task_id} did not complete: #{task['status']}" unless task['status'] == 'COMPLETED'
+expected_order_count = ADAPTIVE ? 3 : (MULTI_STEP ? 2 : 1)
+unless filled_order_ids.length == expected_order_count
+  raise "task #{task_id} filled #{filled_order_ids.length} orders, expected #{expected_order_count}"
+end
+raise "task #{task_id} did not settle ADL" if ADL && !adl_completed
+raise "task #{task_id} did not cancel and settle a partial child order" if ADAPTIVE_CANCEL && !adaptive_cancel_completed
+
+result = nil
+40.times do
+  results = request(:get, "#{REFERENCE_URL}/api/v1/internal/integration/risk-results").fetch('data')
+  result = results.find { |item| item.dig('payload', 'risk_decision_id') == decision_id }
+  break if result
+  sleep 0.25
+end
+raise "risk result for #{decision_id} was not published" unless result
+
+details = request(:get, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}")
+puts JSON.pretty_generate(task: task, execution_plan: details['execution_plan'],
+                          order_attempts: details['order_attempts'], risk_result: result)

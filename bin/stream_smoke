@@ -1,0 +1,110 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'net/http'
+require 'redis'
+require 'time'
+require 'uri'
+require_relative '../lib/perp_liquidation'
+
+TOKEN = ENV.fetch('SERVICE_TOKEN', 'local-integration-token')
+LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
+REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', 'http://127.0.0.1:3101')
+REDIS_URL = ENV.fetch('REDIS_URL', 'redis://127.0.0.1:16379/0')
+
+def request(method, url, body = nil)
+  uri = URI(url)
+  request_class = { get: Net::HTTP::Get, post: Net::HTTP::Post }.fetch(method)
+  http_request = request_class.new(uri)
+  http_request['Authorization'] = "Bearer #{TOKEN}"
+  http_request['Content-Type'] = 'application/json'
+  http_request.body = JSON.generate(body) if body
+  response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(http_request) }
+  raise "#{method.upcase} #{url} failed: #{response.code} #{response.body}" unless response.code.to_i.between?(200, 299)
+
+  JSON.parse(response.body)
+end
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/loss-policy",
+  bankruptcy_loss: '0', insurance_coverage_ratio: '1', currency: 'USDT'
+)
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/BTCUSDT",
+  best_bid: '54190',
+  best_ask: '54210',
+  observed_at: Time.now.utc.iso8601,
+  bids: [{ price: '54190', quantity: '1' }],
+  asks: [{ price: '54210', quantity: '1' }],
+  quantity_increment: '0.001'
+)
+request(:post, "#{REFERENCE_URL}/api/v1/internal/integration/positions/888/reset", size: '0.01')
+position = request(:get, "#{REFERENCE_URL}/api/v1/internal/positions/888").fetch('data')
+sequence = (Time.now.utc.to_f * 1_000_000).to_i
+decision_id = "risk_stream_#{sequence}"
+command = {
+  schema_version: 1,
+  risk_decision_id: decision_id,
+  risk_unit_id: 'position:888',
+  decision_sequence: sequence,
+  action: 'LIQUIDATE_POSITION',
+  execution_priority: 10,
+  user_id: position.fetch('user_id'),
+  account_id: position.fetch('account_id'),
+  position_id: position.fetch('position_id'),
+  position_version: position.fetch('version'),
+  symbol: position.fetch('symbol'),
+  position_side: position.fetch('side'),
+  instruction: {
+    target_quantity: '0.01', max_executable_quantity: '0.01', quantity_mode: 'EXACT',
+    order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
+  },
+  price_protection: {
+    bankruptcy_price: '54000', max_deviation: '0.03', quote_max_age_ms: 2000
+  },
+  risk_snapshot: {
+    position_size: position.fetch('size'), source: 'redis-stream-smoke',
+    market_data_timestamp: Time.now.utc.iso8601
+  },
+  expire_at: (Time.now.utc + 300).iso8601,
+  created_at: Time.now.utc.iso8601
+}
+
+publisher = PerpLiquidation::Messaging::RedisStreamPublisher.new(redis: Redis.new(url: REDIS_URL))
+publisher.publish(topic: 'risk.liquidation.command', payload: command, event_id: decision_id)
+
+task = nil
+80.times do
+  response = request(
+    :get,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/by-risk-decision/#{URI.encode_www_form_component(decision_id)}"
+  )
+  task = response.fetch('data')
+  break if task['order_id']
+  sleep 0.25
+rescue RuntimeError => e
+  raise unless e.message.include?('404')
+  sleep 0.25
+end
+raise "stream command #{decision_id} did not create an order" unless task && task['order_id']
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/orders/#{URI.encode_www_form_component(task.fetch('order_id'))}/fill",
+  average_price: '54180', fee: '0.20'
+)
+
+80.times do
+  task = request(
+    :get,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/by-risk-decision/#{URI.encode_www_form_component(decision_id)}"
+  ).fetch('data')
+  break if task['status'] == 'COMPLETED'
+  sleep 0.25
+end
+raise "stream task #{decision_id} did not complete: #{task['status']}" unless task['status'] == 'COMPLETED'
+
+puts JSON.pretty_generate(task: task, transport: 'redis_streams')

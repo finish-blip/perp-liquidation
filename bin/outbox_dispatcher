@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../lib/perp_liquidation'
+
+application = PerpLiquidation::Application.new
+interval = Float(ENV.fetch('OUTBOX_DISPATCH_INTERVAL_SECONDS', '0.5'))
+
+loop do
+  application.outbox_dispatcher.perform
+  sleep(interval)
+end

@@ -1,0 +1,172 @@
+x-runtime-image: &runtime-image
+  image: perp-liquidation-runtime:local
+  build:
+    context: .
+    dockerfile: Dockerfile.real
+
+services:
+  db:
+    image: mysql:5.7
+    container_name: perp-liquidation-db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: perp_liquidation
+      MYSQL_USER: liquidation
+      MYSQL_PASSWORD: liquidationpass
+    ports:
+      - "13306:3306"
+    volumes:
+      - perp_liquidation_mysql:/var/lib/mysql
+      - ./db/migrations/001_create_liquidation_tables.sql:/docker-entrypoint-initdb.d/001_liquidation.sql:ro
+      - ./db/migrations/002_create_execution_plans.sql:/docker-entrypoint-initdb.d/002_execution_plans.sql:ro
+      - ./db/migrations/003_create_loss_mitigation_tables.sql:/docker-entrypoint-initdb.d/003_loss_mitigation.sql:ro
+      - ./db/migrations/004_harden_scheduling_and_outbox.sql:/docker-entrypoint-initdb.d/004_scheduling_outbox.sql:ro
+      - ./db/migrations/005_add_order_event_sequence.sql:/docker-entrypoint-initdb.d/007_order_event_sequence.sql:ro
+      - ./db/migrations/006_add_execution_protection.sql:/docker-entrypoint-initdb.d/008_execution_protection.sql:ro
+      - ./db/migrations/007_add_adaptive_execution.sql:/docker-entrypoint-initdb.d/009_adaptive_execution.sql:ro
+      - ./db/migrations/008_add_portfolio_liquidation.sql:/docker-entrypoint-initdb.d/010_portfolio_liquidation.sql:ro
+      - ./db/integration/001_create_reference_service_tables.sql:/docker-entrypoint-initdb.d/005_reference.sql:ro
+      - ./db/integration/002_create_loss_mitigation_reference_tables.sql:/docker-entrypoint-initdb.d/006_loss_reference.sql:ro
+      - ./db/integration/003_add_portfolio_reference_data.sql:/docker-entrypoint-initdb.d/011_portfolio_reference.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uliquidation", "-pliquidationpass"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:6-alpine
+    container_name: perp-liquidation-redis
+    ports:
+      - "16379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - perp_liquidation_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  reference-services:
+    <<: *runtime-image
+    container_name: perp-liquidation-reference-services
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/reference_services_server"]
+    working_dir: /workspace
+    environment: &runtime-environment
+      DATABASE_URL: mysql2://liquidation:liquidationpass@db:3306/perp_liquidation
+      REDIS_URL: redis://redis:6379/0
+      ORDER_SERVICE_URL: http://reference-services:3101
+      POSITION_SERVICE_URL: http://reference-services:3101
+      ACCOUNT_SERVICE_URL: http://reference-services:3101
+      MARKET_DATA_SERVICE_URL: http://reference-services:3101
+      RISK_SERVICE_URL: http://reference-services:3101
+      LOSS_MITIGATION_SERVICE_URL: http://reference-services:3101
+      LIQUIDATION_URL: http://api:9292
+      SERVICE_TOKEN: local-integration-token
+      DATA_MODE: real
+      PRIORITY_AGING_SECONDS: 30
+      SYMBOL_ACTIVE_ORDER_LIMIT: 100
+      EXECUTION_DEFER_SECONDS: 2
+    volumes:
+      - ./:/workspace
+    ports:
+      - "3101:3101"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *runtime-image
+    container_name: perp-liquidation-api
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/api_server"]
+    working_dir: /workspace
+    environment: *runtime-environment
+    volumes:
+      - ./:/workspace
+    ports:
+      - "9292:9292"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      reference-services:
+        condition: service_started
+
+  liquidation-worker:
+    <<: *runtime-image
+    container_name: perp-liquidation-worker
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/liquidation_worker"]
+    working_dir: /workspace
+    environment: *runtime-environment
+    volumes:
+      - ./:/workspace
+    depends_on:
+      api:
+        condition: service_started
+
+  recovery-worker:
+    <<: *runtime-image
+    container_name: perp-liquidation-recovery-worker
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/recovery_worker"]
+    working_dir: /workspace
+    environment: *runtime-environment
+    volumes:
+      - ./:/workspace
+    depends_on:
+      api:
+        condition: service_started
+
+  loss-mitigation-worker:
+    <<: *runtime-image
+    container_name: perp-liquidation-loss-mitigation-worker
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/loss_mitigation_worker"]
+    working_dir: /workspace
+    environment: *runtime-environment
+    volumes:
+      - ./:/workspace
+    depends_on:
+      api:
+        condition: service_started
+
+  event-stream-consumer:
+    <<: *runtime-image
+    container_name: perp-liquidation-event-stream-consumer
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/event_stream_consumer"]
+    working_dir: /workspace
+    environment:
+      <<: *runtime-environment
+      EVENT_STREAMS_ENABLED: "true"
+      EVENT_STREAM_GROUP: perp-liquidation
+      EVENT_STREAM_CONSUMER: perp-liquidation-1
+    volumes:
+      - ./:/workspace
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  outbox-dispatcher:
+    <<: *runtime-image
+    container_name: perp-liquidation-outbox-dispatcher
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["-I/workspace/lib", "/workspace/bin/outbox_dispatcher"]
+    working_dir: /workspace
+    environment: *runtime-environment
+    volumes:
+      - ./:/workspace
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  perp_liquidation_mysql:
+  perp_liquidation_redis:

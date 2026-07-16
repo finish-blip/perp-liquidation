@@ -1,0 +1,18 @@
+FROM quay.io/openware/peatio:2.6.48
+
+ENV BUNDLE_APP_CONFIG=/opt/perp-liquidation/bundle-config \
+    BUNDLE_PATH=/opt/perp-liquidation/bundle \
+    BUNDLE_DEPLOYMENT=true \
+    BUNDLE_FROZEN=true
+
+USER root
+RUN mkdir -p /workspace /opt/perp-liquidation/bundle-config /opt/perp-liquidation/bundle \
+    && chown -R app:app /workspace /opt/perp-liquidation
+
+USER app
+WORKDIR /workspace
+
+COPY --chown=app:app Gemfile Gemfile.lock ./
+RUN bundle install --jobs 4 --retry 2
+
+COPY --chown=app:app . ./

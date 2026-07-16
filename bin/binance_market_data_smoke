@@ -1,0 +1,14 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require_relative '../lib/perp_liquidation'
+
+symbol = ARGV.first || ENV.fetch('BINANCE_SYMBOL', 'BTCUSDT')
+client = PerpLiquidation::BinanceFuturesMarketDataClient.new(
+  endpoint: ENV.fetch('BINANCE_FUTURES_URL', PerpLiquidation::BinanceFuturesMarketDataClient::DEFAULT_ENDPOINT),
+  depth_limit: Integer(ENV.fetch('BINANCE_DEPTH_LIMIT', '20')),
+  exchange_info_ttl: Float(ENV.fetch('BINANCE_EXCHANGE_INFO_TTL_SECONDS', '3600'))
+)
+
+puts JSON.pretty_generate(client.find(symbol: symbol).snapshot)

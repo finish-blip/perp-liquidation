@@ -1,0 +1,6 @@
+.bundle
+.git
+.codegraph
+log
+tmp
+vendor/bundle

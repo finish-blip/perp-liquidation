@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative '../lib/perp_liquidation'
+
+application = PerpLiquidation::Application.new
+poll_interval = Float(ENV.fetch('LIQUIDATION_WORKER_POLL_SECONDS', '0.2'))
+
+loop do
+  task = application.liquidation_worker.perform_once
+  sleep(poll_interval) unless task
+end

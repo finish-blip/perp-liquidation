@@ -1,0 +1,213 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'json'
+require 'net/http'
+require 'time'
+require 'uri'
+
+TOKEN = ENV.fetch('SERVICE_TOKEN', 'local-integration-token')
+LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
+REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', 'http://127.0.0.1:3101')
+CANCEL_WITH_APPROVAL = ARGV.include?('--cancel')
+
+def request(method, url, body = nil)
+  uri = URI(url)
+  request_class = { get: Net::HTTP::Get, post: Net::HTTP::Post }.fetch(method)
+  http_request = request_class.new(uri)
+  http_request['Authorization'] = "Bearer #{TOKEN}"
+  http_request['Content-Type'] = 'application/json'
+  http_request.body = JSON.generate(body) if body
+  response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(http_request) }
+  unless response.code.to_i.between?(200, 299)
+    raise "#{method.upcase} #{url} failed: #{response.code} #{response.body}"
+  end
+
+  JSON.parse(response.body)
+end
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/loss-policy",
+  bankruptcy_loss: '0', insurance_coverage_ratio: '1', currency: 'USDT'
+)
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/BTCUSDT",
+  best_bid: '54190', best_ask: '54210', observed_at: Time.now.utc.iso8601,
+  bids: [
+    { price: '54190', quantity: '0.006' },
+    { price: '54180', quantity: '0.01' }
+  ],
+  asks: [{ price: '54210', quantity: '1' }],
+  quantity_increment: '0.001'
+)
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/ETHUSDT",
+  best_bid: '3010', best_ask: '3011', observed_at: Time.now.utc.iso8601,
+  bids: [{ price: '3010', quantity: '10' }],
+  asks: [{ price: '3011', quantity: '10' }],
+  quantity_increment: '0.001'
+)
+
+sequence = (Time.now.utc.to_f * 1_000_000).to_i
+account_version = (sequence % 1_000_000) + 1000
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/accounts/acc_1001/reset",
+  version: account_version
+)
+request(:post, "#{REFERENCE_URL}/api/v1/internal/integration/positions/888/reset", size: '0.01')
+request(:post, "#{REFERENCE_URL}/api/v1/internal/integration/positions/889/reset", size: '2')
+btc = request(:get, "#{REFERENCE_URL}/api/v1/internal/positions/888").fetch('data')
+eth = request(:get, "#{REFERENCE_URL}/api/v1/internal/positions/889").fetch('data')
+
+plan_id = "portfolio_real_#{sequence}"
+risk_decision_id = "portfolio_risk_real_#{sequence}"
+now = Time.now.utc
+command = {
+  schema_version: 2,
+  plan_id: plan_id,
+  risk_decision_id: risk_decision_id,
+  risk_unit_id: 'account:acc_1001:settlement:USDT',
+  decision_sequence: sequence,
+  action: 'LIQUIDATE_PORTFOLIO',
+  execution_priority: 5,
+  user_id: btc.fetch('user_id'),
+  account_id: 'acc_1001',
+  account_version: account_version,
+  margin_mode: 'CROSS',
+  max_total_authorized_notional: '100000',
+  failure_mode: 'STOP_ON_FAILURE',
+  items: [
+    {
+      action: 'LIQUIDATE_POSITION',
+      position_id: btc.fetch('position_id'),
+      position_version: btc.fetch('version'),
+      symbol: btc.fetch('symbol'),
+      position_side: btc.fetch('side'),
+      authorized_notional: '60000',
+      instruction: {
+        target_quantity: '0.01', max_executable_quantity: '0.01', quantity_mode: 'EXACT',
+        order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
+      },
+      price_protection: {
+        bankruptcy_price: '54000', max_deviation: '0.03', quote_max_age_ms: 60_000
+      },
+      execution_policy: {
+        strategy: 'ADAPTIVE', urgency: 'NORMAL', max_child_orders: 4,
+        max_child_quantity: '0.006', min_child_quantity: '0.001',
+        max_book_participation: '1', child_order_cooldown_ms: 0,
+        child_order_timeout_ms: 5000
+      },
+      risk_snapshot: {
+        position_size: '0.01', mark_price: '54200', market_data_timestamp: now.iso8601
+      }
+    },
+    {
+      action: 'LIQUIDATE_POSITION',
+      position_id: eth.fetch('position_id'),
+      position_version: eth.fetch('version'),
+      symbol: eth.fetch('symbol'),
+      position_side: eth.fetch('side'),
+      authorized_notional: '30000',
+      instruction: {
+        target_quantity: '2', max_executable_quantity: '2', quantity_mode: 'EXACT',
+        order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
+      },
+      price_protection: {
+        bankruptcy_price: '3000', max_deviation: '0.03', quote_max_age_ms: 60_000
+      },
+      risk_snapshot: {
+        position_size: '2', mark_price: '3020', market_data_timestamp: now.iso8601
+      }
+    }
+  ],
+  expire_at: (now + 300).iso8601,
+  created_at: now.iso8601
+}
+
+created = request(
+  :post,
+  "#{LIQUIDATION_URL}/api/v1/internal/liquidation/portfolio-plans",
+  command
+)
+
+if CANCEL_WITH_APPROVAL
+  operation_id = "cancel_#{plan_id}"
+  action = request(
+    :post,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/operator-actions",
+    operation_id: operation_id,
+    action: 'CANCEL_PORTFOLIO_PLAN',
+    target_type: 'PORTFOLIO_PLAN',
+    target_id: plan_id,
+    operator_id: 'operator-a',
+    approver_id: 'operator-b',
+    approval_id: "approval_#{plan_id}",
+    reason: 'stage-4 dual-approval cancellation smoke'
+  )
+  audit = request(
+    :get,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/operator-actions/#{URI.encode_www_form_component(operation_id)}"
+  )
+  details = request(
+    :get,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/portfolio-plans/#{URI.encode_www_form_component(plan_id)}"
+  )
+  raise "operator action #{operation_id} did not complete" unless audit.dig('data', 'status') == 'COMPLETED'
+  raise "portfolio plan #{plan_id} was not cancelled" unless details.dig('data', 'status') == 'CANCELLED'
+  unless details.fetch('items').all? { |item| item['status'] == 'CANCELLED' }
+    raise "portfolio plan #{plan_id} did not cancel every item"
+  end
+
+  puts JSON.pretty_generate(created: created, action: action, audit: audit, plan: details)
+  exit 0
+end
+
+filled_orders = []
+details = nil
+240.times do
+  details = request(
+    :get,
+    "#{LIQUIDATION_URL}/api/v1/internal/liquidation/portfolio-plans/#{URI.encode_www_form_component(plan_id)}"
+  )
+  plan = details.fetch('data')
+  break if plan['status'] == 'COMPLETED'
+  raise "portfolio plan #{plan_id} failed: #{plan}" if %w[FAILED MANUAL_REVIEW CANCELLED].include?(plan['status'])
+
+  running = details.fetch('items').find { |item| item['status'] == 'RUNNING' }
+  task = running && running.fetch('task')
+  if task && task['status'] == 'ORDER_ACCEPTED' && task['order_id'] && !filled_orders.include?(task['order_id'])
+    average_price = task['symbol'] == 'BTCUSDT' ? '54180' : '3010'
+    request(
+      :post,
+      "#{REFERENCE_URL}/api/v1/internal/integration/orders/#{URI.encode_www_form_component(task['order_id'])}/fill",
+      average_price: average_price,
+      fee: '0.20'
+    )
+    filled_orders << task['order_id']
+  end
+  sleep 0.25
+end
+
+plan = details.fetch('data')
+raise "portfolio plan #{plan_id} did not complete: #{plan['status']}" unless plan['status'] == 'COMPLETED'
+raise "portfolio plan #{plan_id} submitted #{filled_orders.length} orders, expected 3" unless filled_orders.length == 3
+
+risk_result = nil
+40.times do
+  results = request(:get, "#{REFERENCE_URL}/api/v1/internal/integration/risk-results").fetch('data')
+  risk_result = results.find { |item| item.dig('payload', 'plan_id') == plan_id }
+  break if risk_result
+  sleep 0.25
+end
+raise "portfolio result for #{plan_id} was not published" unless risk_result
+
+puts JSON.pretty_generate(
+  plan: plan,
+  items: details.fetch('items'),
+  filled_orders: filled_orders,
+  risk_result: risk_result
+)

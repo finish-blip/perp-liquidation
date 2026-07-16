@@ -1,0 +1,20 @@
+name: perp-liquidation-test
+
+services:
+  rspec:
+    image: quay.io/openware/peatio:2.6.48
+    pull_policy: never
+    network_mode: none
+    working_dir: /workspace
+    volumes:
+      - type: bind
+        source: .
+        target: /workspace
+        read_only: true
+    environment:
+      GEM_HOME: /opt/vendor/bundle/ruby/2.6.0
+      GEM_PATH: /opt/vendor/bundle/ruby/2.6.0
+    entrypoint:
+      - ruby
+      - -Ilib
+      - /opt/vendor/bundle/ruby/2.6.0/bin/rspec
