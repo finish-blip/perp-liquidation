@@ -36,6 +36,19 @@ docker build --pull -f Dockerfile.real -t perp-liquidation:local .
 docker run --rm --network none perp-liquidation:local bundle exec rake spec
 ```
 
+执行真实 MySQL、Redis、API 和 Worker 组件场景矩阵：
+
+```bash
+docker compose -f docker-compose.real.yml --profile test up --build \
+  --abort-on-container-exit --exit-code-from component-smoke component-smoke
+```
+
+场景输出和汇总报告写入 `tmp/component-smoke/`。检查完成后清理组件环境：
+
+```bash
+docker compose -f docker-compose.real.yml --profile test down -v --remove-orphans
+```
+
 ## CI 门禁
 
 每次 Pull Request 和 `main` 推送必须完成：

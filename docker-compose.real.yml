@@ -73,6 +73,20 @@ services:
       - ./:/workspace
     ports:
       - "3101:3101"
+    healthcheck:
+      test:
+        - CMD
+        - bundle
+        - exec
+        - ruby
+        - -rnet/http
+        - -ruri
+        - -e
+        - "response = Net::HTTP.get_response(URI('http://127.0.0.1:3101/health')); exit(response.is_a?(Net::HTTPSuccess) ? 0 : 1)"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
     depends_on:
       db:
         condition: service_healthy
@@ -88,13 +102,27 @@ services:
       - ./:/workspace
     ports:
       - "9292:9292"
+    healthcheck:
+      test:
+        - CMD
+        - bundle
+        - exec
+        - ruby
+        - -rnet/http
+        - -ruri
+        - -e
+        - "response = Net::HTTP.get_response(URI('http://127.0.0.1:9292/health')); exit(response.is_a?(Net::HTTPSuccess) ? 0 : 1)"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 3s
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
       reference-services:
-        condition: service_started
+        condition: service_healthy
 
   liquidation-worker:
     <<: *runtime-image
@@ -107,7 +135,7 @@ services:
       - ./:/workspace
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
   recovery-worker:
     <<: *runtime-image
@@ -120,7 +148,7 @@ services:
       - ./:/workspace
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
   loss-mitigation-worker:
     <<: *runtime-image
@@ -133,7 +161,7 @@ services:
       - ./:/workspace
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
 
   event-stream-consumer:
     <<: *runtime-image
@@ -152,7 +180,7 @@ services:
       redis:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
 
   outbox-dispatcher:
     <<: *runtime-image
@@ -165,6 +193,41 @@ services:
       - ./:/workspace
     depends_on:
       api:
+        condition: service_healthy
+
+  component-smoke:
+    <<: *runtime-image
+    profiles: ["test"]
+    entrypoint: ["bundle", "exec", "ruby"]
+    command: ["/workspace/bin/component_smoke"]
+    working_dir: /workspace
+    environment:
+      <<: *runtime-environment
+      LIQUIDATION_URL: http://api:9292
+      REFERENCE_SERVICES_URL: http://reference-services:3101
+      REDIS_URL: redis://redis:6379/0
+      COMPONENT_SMOKE_ARTIFACT_DIR: /artifacts
+    volumes:
+      - ./:/workspace
+      - ./tmp/component-smoke:/artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      reference-services:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      liquidation-worker:
+        condition: service_started
+      recovery-worker:
+        condition: service_started
+      loss-mitigation-worker:
+        condition: service_started
+      event-stream-consumer:
+        condition: service_started
+      outbox-dispatcher:
         condition: service_started
 
 volumes:

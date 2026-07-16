@@ -1,0 +1,114 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'fileutils'
+require 'json'
+require 'net/http'
+require 'open3'
+require 'rbconfig'
+require 'time'
+require 'uri'
+
+ROOT = File.expand_path('..', __dir__)
+LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
+REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', 'http://127.0.0.1:3101')
+REDIS_URL = ENV.fetch('REDIS_URL', 'redis://127.0.0.1:16379/0')
+ARTIFACT_ROOT = ENV.fetch('COMPONENT_SMOKE_ARTIFACT_DIR', File.join(ROOT, 'tmp', 'component-smoke'))
+
+SCENARIOS = [
+  ['real-static', 'real_mode_smoke', []],
+  ['real-up-to', 'real_mode_smoke', ['--up-to']],
+  ['real-multi-step', 'real_mode_smoke', ['--multi-step']],
+  ['real-price-block', 'real_mode_smoke', ['--price-block']],
+  ['real-adaptive', 'real_mode_smoke', ['--adaptive']],
+  ['real-adaptive-cancel', 'real_mode_smoke', ['--adaptive-cancel']],
+  ['real-reconcile', 'real_mode_smoke', ['--reconcile']],
+  ['real-adl', 'real_mode_smoke', ['--adl']],
+  ['portfolio', 'portfolio_mode_smoke', []],
+  ['portfolio-cancel', 'portfolio_mode_smoke', ['--cancel']],
+  ['redis-stream', 'stream_smoke', []]
+].freeze
+
+def wait_for_health!(base_url, label)
+  uri = URI.join(base_url, '/health')
+  30.times do
+    response = Net::HTTP.start(uri.host, uri.port, open_timeout: 1, read_timeout: 2) do |http|
+      http.request(Net::HTTP::Get.new(uri))
+    end
+    return if response.is_a?(Net::HTTPSuccess)
+
+    sleep 1
+  rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError, Net::OpenTimeout, Net::ReadTimeout
+    sleep 1
+  end
+
+  raise "#{label} did not become healthy at #{uri}"
+end
+
+def selected_scenarios
+  return SCENARIOS if ARGV.empty?
+
+  if ARGV == ['--list']
+    puts SCENARIOS.map(&:first)
+    exit 0
+  end
+
+  names = ARGV
+  unknown = names - SCENARIOS.map(&:first)
+  raise "unknown component smoke scenarios: #{unknown.join(', ')}" unless unknown.empty?
+
+  SCENARIOS.select { |name, _script, _args| names.include?(name) }
+end
+
+scenarios = selected_scenarios
+run_directory = File.join(ARTIFACT_ROOT, "#{Time.now.utc.strftime('%Y%m%dT%H%M%S')}-#{Process.pid}")
+FileUtils.mkdir_p(run_directory)
+
+wait_for_health!(LIQUIDATION_URL, 'liquidation API')
+wait_for_health!(REFERENCE_URL, 'reference services')
+
+environment = {
+  'LIQUIDATION_URL' => LIQUIDATION_URL,
+  'REFERENCE_SERVICES_URL' => REFERENCE_URL,
+  'REDIS_URL' => REDIS_URL
+}
+results = []
+
+scenarios.each do |name, script, arguments|
+  command = [RbConfig.ruby, File.join(ROOT, 'bin', script), *arguments]
+  started_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  puts "==> #{name}"
+  stdout, stderr, status = Open3.capture3(environment, *command, chdir: ROOT)
+  duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started_at
+
+  File.write(File.join(run_directory, "#{name}.stdout.log"), stdout)
+  File.write(File.join(run_directory, "#{name}.stderr.log"), stderr)
+  result = {
+    name: name,
+    command: command,
+    status: status.success? ? 'PASSED' : 'FAILED',
+    exit_code: status.exitstatus,
+    duration_seconds: duration.round(3),
+    stdout_bytes: stdout.bytesize,
+    stderr_bytes: stderr.bytesize
+  }
+  results << result
+  puts "#{result.fetch(:status)} #{name} (#{result.fetch(:duration_seconds)}s)"
+
+  next if status.success?
+
+  warn stdout unless stdout.empty?
+  warn stderr unless stderr.empty?
+  break
+end
+
+report = {
+  generated_at: Time.now.utc.iso8601,
+  liquidation_url: LIQUIDATION_URL,
+  reference_services_url: REFERENCE_URL,
+  results: results
+}
+File.write(File.join(run_directory, 'report.json'), JSON.pretty_generate(report))
+puts JSON.pretty_generate(report)
+
+exit 1 unless results.length == scenarios.length && results.all? { |result| result[:status] == 'PASSED' }

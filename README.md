@@ -74,6 +74,8 @@ ruby bin/real_mode_smoke
 ruby bin/portfolio_mode_smoke
 ```
 
+完整组件场景矩阵使用 `component-smoke` profile，命令和报告位置见 [`docs/testing.md`](docs/testing.md)。
+
 只接入 Binance USD-M 永续合约公开行情时，不需要 API Key。设置：
 
 ```bash
