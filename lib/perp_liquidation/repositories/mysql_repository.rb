@@ -8,6 +8,7 @@ module PerpLiquidation
     CLAIM_CANDIDATE_LIMIT = 20
     CLAIM_TRANSACTION_MAX_ATTEMPTS = 4
     RETRYABLE_MYSQL_LOCK_ERROR_NUMBERS = [1205, 1213].freeze
+    TASK_LIST_FILTERS = %i[user_id symbol status risk_unit_id].freeze
 
     TaskEvent = Struct.new(:task_id, :event_type, :payload, :external_event_id, :created_at, keyword_init: true)
     PortfolioPlanEvent = Struct.new(:plan_id, :event_type, :payload, :created_at, keyword_init: true)
@@ -919,6 +920,32 @@ module PerpLiquidation
       rows('SELECT * FROM liquidation_tasks ORDER BY id DESC').map { |row| hydrate_task(row) }
     end
 
+    def list_tasks(filters: {}, limit: 100, before_id: nil)
+      conditions = []
+      filters.each do |field, expected|
+        next if expected.nil?
+
+        raise ArgumentError, "unsupported task filter #{field}" unless TASK_LIST_FILTERS.include?(field.to_sym)
+
+        conditions << "#{field} = #{quote(expected)}"
+      end
+      conditions << "id < #{quote(Integer(before_id))}" if before_id
+      where_clause = conditions.empty? ? '' : "WHERE #{conditions.join(' AND ')}"
+      bounded_limit = Integer(limit)
+      result_rows = rows(<<~SQL)
+        SELECT * FROM liquidation_tasks
+        #{where_clause}
+        ORDER BY id DESC
+        LIMIT #{bounded_limit + 1}
+      SQL
+      has_more = result_rows.length > bounded_limit
+      page_rows = result_rows.first(bounded_limit)
+      {
+        items: page_rows.map { |row| hydrate_task(row) },
+        next_before_id: has_more ? Integer(value(page_rows.last, :id)) : nil
+      }
+    end
+
     def stuck_tasks(statuses:, updated_before:, limit: 100)
       return [] if statuses.empty?
 
@@ -928,6 +955,27 @@ module PerpLiquidation
         WHERE status IN (#{status_values}) AND updated_at <= #{quote(updated_before)}
         ORDER BY updated_at ASC
         LIMIT #{Integer(limit)}
+      SQL
+    end
+
+    def stuck_tasks_by_status(status_cutoffs:, per_status_limit: 100)
+      return [] if status_cutoffs.empty?
+
+      bounded_limit = Integer(per_status_limit)
+      queries = status_cutoffs.map do |status, cutoff|
+        <<~SQL.strip
+          (SELECT * FROM liquidation_tasks
+           WHERE status = #{quote(status)} AND updated_at <= #{quote(cutoff)}
+           ORDER BY updated_at ASC
+           LIMIT #{bounded_limit})
+        SQL
+      end
+      rows(<<~SQL).map { |row| hydrate_task(row) }
+        SELECT * FROM (
+          #{queries.join("\nUNION ALL\n")}
+        ) AS stuck_candidates
+        ORDER BY updated_at ASC
+        LIMIT #{bounded_limit * status_cutoffs.length}
       SQL
     end
 

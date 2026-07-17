@@ -27,6 +27,8 @@ module PerpLiquidation
 
     def initialize
       @tasks = {}
+      @task_row_ids = {}
+      @next_task_row_id = 1
       @by_risk_decision = {}
       @by_order_id = {}
       @events = []
@@ -94,6 +96,8 @@ module PerpLiquidation
         )
         plan = command.position_action? ? ExecutionPlanner.new(command).plan(task_id: task.task_id) : nil
         @tasks[task.task_id] = task
+        @task_row_ids[task.task_id] = @next_task_row_id
+        @next_task_row_id += 1
         @by_risk_decision[task.risk_decision_id] = task
         @risk_snapshots[task.task_id] = command.risk_snapshot
         plan&.steps&.each { |step| @execution_steps[[task.task_id, step.step_sequence]] = step }
@@ -640,11 +644,33 @@ module PerpLiquidation
       @tasks.values
     end
 
+    def list_tasks(filters: {}, limit: 100, before_id: nil)
+      bounded_limit = Integer(limit)
+      rows = @tasks.values.select do |task|
+        (!before_id || @task_row_ids.fetch(task.task_id) < Integer(before_id)) &&
+          filters.all? { |field, expected| expected.nil? || task.public_send(field).to_s == expected.to_s }
+      end
+      rows = rows.sort_by { |task| -@task_row_ids.fetch(task.task_id) }
+      page_rows = rows.first(bounded_limit + 1)
+      has_more = page_rows.length > bounded_limit
+      items = page_rows.first(bounded_limit)
+      {
+        items: items,
+        next_before_id: has_more ? @task_row_ids.fetch(items.last.task_id) : nil
+      }
+    end
+
     def stuck_tasks(statuses:, updated_before:, limit: 100)
       @tasks.values
             .select { |task| statuses.include?(task.status) && task.updated_at <= updated_before }
             .sort_by(&:updated_at)
             .first(limit)
+    end
+
+    def stuck_tasks_by_status(status_cutoffs:, per_status_limit: 100)
+      status_cutoffs.flat_map do |status, cutoff|
+        stuck_tasks(statuses: [status], updated_before: cutoff, limit: per_status_limit)
+      end.sort_by(&:updated_at)
     end
 
     def events_for(task_id)

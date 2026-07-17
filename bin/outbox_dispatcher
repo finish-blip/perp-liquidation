@@ -3,7 +3,7 @@
 
 require_relative '../lib/perp_liquidation'
 
-application = PerpLiquidation::Application.new
+application = PerpLiquidation::Application.new(role: :outbox_dispatcher)
 interval = Float(ENV.fetch('OUTBOX_DISPATCH_INTERVAL_SECONDS', '0.5'))
 
 loop do

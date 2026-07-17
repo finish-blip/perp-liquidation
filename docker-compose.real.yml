@@ -26,6 +26,7 @@ services:
       - ./db/migrations/007_add_adaptive_execution.sql:/docker-entrypoint-initdb.d/009_adaptive_execution.sql:ro
       - ./db/migrations/008_add_portfolio_liquidation.sql:/docker-entrypoint-initdb.d/010_portfolio_liquidation.sql:ro
       - ./db/migrations/009_add_portfolio_scope_controls.sql:/docker-entrypoint-initdb.d/012_portfolio_scope_controls.sql:ro
+      - ./db/migrations/010_add_query_performance_indexes.sql:/docker-entrypoint-initdb.d/013_query_performance_indexes.sql:ro
       - ./db/integration/001_create_reference_service_tables.sql:/docker-entrypoint-initdb.d/005_reference.sql:ro
       - ./db/integration/002_create_loss_mitigation_reference_tables.sql:/docker-entrypoint-initdb.d/006_loss_reference.sql:ro
       - ./db/integration/003_add_portfolio_reference_data.sql:/docker-entrypoint-initdb.d/011_portfolio_reference.sql:ro
@@ -62,6 +63,15 @@ services:
       POSITION_SERVICE_URL: http://reference-services:3101
       ACCOUNT_SERVICE_URL: http://reference-services:3101
       MARKET_DATA_SERVICE_URL: http://reference-services:3101
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-internal}
+      BINANCE_REFERENCE_ENABLED: ${BINANCE_REFERENCE_ENABLED:-false}
+      BINANCE_REFERENCE_MAX_DEVIATION: ${BINANCE_REFERENCE_MAX_DEVIATION:-0.03}
+      BINANCE_REFERENCE_MAX_AGE_MS: ${BINANCE_REFERENCE_MAX_AGE_MS:-2000}
+      BINANCE_REFERENCE_DEPTH_LIMIT: ${BINANCE_REFERENCE_DEPTH_LIMIT:-5}
+      BINANCE_FUTURES_URL: ${BINANCE_FUTURES_URL:-https://fapi.binance.com}
+      BINANCE_DEPTH_LIMIT: ${BINANCE_DEPTH_LIMIT:-20}
+      BINANCE_EXCHANGE_INFO_TTL_SECONDS: ${BINANCE_EXCHANGE_INFO_TTL_SECONDS:-3600}
+      ALLOW_BINANCE_AS_EXECUTION_MARKET_DATA: ${ALLOW_BINANCE_AS_EXECUTION_MARKET_DATA:-false}
       RISK_SERVICE_URL: http://reference-services:3101
       APPROVAL_SERVICE_URL: http://reference-services:3101
       LOSS_MITIGATION_SERVICE_URL: http://reference-services:3101

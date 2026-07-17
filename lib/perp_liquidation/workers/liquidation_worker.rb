@@ -16,17 +16,15 @@ module PerpLiquidation
       end
 
       def perform_once
-        @repository.with_connection do
-          heartbeat_if_due
-          task = @repository.claim_next_task!(
-            worker_id: @worker_id,
-            lease_seconds: @lease_seconds,
-            priority_aging_seconds: @priority_aging_seconds
-          )
-          next nil unless task
+        heartbeat_if_due
+        task = @repository.claim_next_task!(
+          worker_id: @worker_id,
+          lease_seconds: @lease_seconds,
+          priority_aging_seconds: @priority_aging_seconds
+        )
+        return nil unless task
 
-          @orchestrator.execute(task)
-        end
+        @orchestrator.execute(task)
       end
 
       private

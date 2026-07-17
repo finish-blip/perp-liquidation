@@ -10,33 +10,74 @@ module PerpLiquidation
       ACCOUNT_SERVICE_URL RISK_SERVICE_URL APPROVAL_SERVICE_URL SERVICE_TOKEN
     ].freeze
     MARKET_DATA_PROVIDERS = %w[internal binance].freeze
+    ROLES = %i[all api liquidation_worker recovery_worker loss_mitigation_worker
+               outbox_dispatcher event_stream_consumer].freeze
+    DEFAULT_POOL_SIZES = {
+      all: 10, api: 10, liquidation_worker: 2, recovery_worker: 2,
+      loss_mitigation_worker: 2, outbox_dispatcher: 2, event_stream_consumer: 2
+    }.freeze
 
-    attr_reader :repository, :command_receiver, :orchestrator, :liquidation_worker,
-                :recovery_worker, :reconciliation_worker, :outbox_dispatcher,
-                :loss_mitigation_worker, :order_client, :position_client,
-                :account_client, :market_data_client, :loss_mitigation_client, :metrics, :event_stream_consumer,
-                :portfolio_plan_receiver, :portfolio_plan_coordinator, :operator_action_service, :approval_client
-
-    def initialize(env: ENV)
+    def initialize(env: ENV, role: :all)
       @env = env
+      @role = role.to_sym
+      raise InvalidCommand, "unsupported application role #{@role.inspect}" unless ROLES.include?(@role)
+
       @data_mode = @env.fetch('DATA_MODE', 'real')
       validate_configuration!
-      @metrics = build_metrics_registry
-      @repository = build_repository
-      @command_receiver = CommandReceiver.new(repository: repository, metrics: metrics)
-      @portfolio_plan_coordinator = PortfolioPlanCoordinator.new(repository: repository)
-      @order_client = build_order_client
-      @position_client = build_position_client
-      @account_client = build_account_client
-      @market_data_client = build_market_data_client
-      @loss_mitigation_client = build_loss_mitigation_client
-      @approval_client = build_approval_client
-      @portfolio_plan_receiver = PortfolioPlanReceiver.new(
+    end
+
+    def metrics
+      @metrics ||= build_metrics_registry
+    end
+
+    def repository
+      @repository ||= build_repository
+    end
+
+    def command_receiver
+      @command_receiver ||= CommandReceiver.new(repository: repository, metrics: metrics)
+    end
+
+    def portfolio_plan_coordinator
+      @portfolio_plan_coordinator ||= PortfolioPlanCoordinator.new(repository: repository)
+    end
+
+    def order_client
+      @order_client ||= build_order_client
+    end
+
+    def position_client
+      @position_client ||= build_position_client
+    end
+
+    def account_client
+      @account_client ||= build_account_client
+    end
+
+    def market_data_client
+      @market_data_client ||= build_market_data_client
+    end
+
+    def loss_mitigation_client
+      @loss_mitigation_client ||= build_loss_mitigation_client
+    end
+
+    def approval_client
+      @approval_client ||= build_approval_client
+    end
+
+    def portfolio_plan_receiver
+      @portfolio_plan_receiver ||= PortfolioPlanReceiver.new(
         repository: repository,
         account_client: account_client,
         coordinator: portfolio_plan_coordinator,
         metrics: metrics
       )
+    end
+
+    def orchestrator
+      return @orchestrator if @orchestrator
+
       @orchestrator = Orchestrator.new(
         repository: repository,
         order_client: order_client,
@@ -50,25 +91,49 @@ module PerpLiquidation
         execution_defer_seconds: Float(@env.fetch('EXECUTION_DEFER_SECONDS', '2'))
       )
       @orchestrator.metrics = metrics
-      @liquidation_worker = Workers::LiquidationWorker.new(
+      @orchestrator
+    end
+
+    def liquidation_worker
+      @liquidation_worker ||= Workers::LiquidationWorker.new(
         repository: repository,
         orchestrator: orchestrator,
         priority_aging_seconds: Float(@env.fetch('PRIORITY_AGING_SECONDS', '30'))
       )
+    end
+
+    def reconciliation_worker
+      return @reconciliation_worker if @reconciliation_worker
+
       @reconciliation_worker = Workers::ReconciliationWorker.new(
         repository: repository, orchestrator: orchestrator, position_client: position_client
       )
       @reconciliation_worker.metrics = metrics
-      @recovery_worker = Workers::RecoveryWorker.new(reconciliation_worker: reconciliation_worker)
-      @operator_action_service = OperatorActionService.new(
+      @reconciliation_worker
+    end
+
+    def recovery_worker
+      @recovery_worker ||= Workers::RecoveryWorker.new(reconciliation_worker: reconciliation_worker)
+    end
+
+    def operator_action_service
+      @operator_action_service ||= OperatorActionService.new(
         repository: repository,
         portfolio_plan_receiver: portfolio_plan_receiver,
         reconciliation_worker: reconciliation_worker,
         approval_client: approval_client
       )
-      @loss_mitigation_worker = Workers::LossMitigationWorker.new(
+    end
+
+    def loss_mitigation_worker
+      @loss_mitigation_worker ||= Workers::LossMitigationWorker.new(
         repository: repository, orchestrator: orchestrator
       )
+    end
+
+    def outbox_dispatcher
+      return @outbox_dispatcher if @outbox_dispatcher
+
       @outbox_dispatcher = Workers::OutboxDispatcher.new(
         repository: repository,
         publisher: build_result_publisher,
@@ -76,6 +141,12 @@ module PerpLiquidation
         base_delay_seconds: Float(@env.fetch('OUTBOX_BASE_DELAY_SECONDS', '1'))
       )
       @outbox_dispatcher.metrics = metrics
+      @outbox_dispatcher
+    end
+
+    def event_stream_consumer
+      return @event_stream_consumer if defined?(@event_stream_consumer)
+
       @event_stream_consumer = build_event_stream_consumer
     end
 
@@ -111,7 +182,7 @@ module PerpLiquidation
         read_timeout: Integer(@env.fetch('DATABASE_READ_TIMEOUT_SECONDS', '5')),
         write_timeout: Integer(@env.fetch('DATABASE_WRITE_TIMEOUT_SECONDS', '5'))
       }
-      pool_size = Integer(@env.fetch('DATABASE_POOL_SIZE', '10'))
+      pool_size = database_pool_size
       raise InvalidCommand, 'DATABASE_POOL_SIZE must be at least 2 in real mode' if pool_size < 2
 
       pool = MysqlConnectionPool.new(
@@ -195,7 +266,9 @@ module PerpLiquidation
 
       ReferenceCheckedMarketDataClient.new(
         execution_client: execution_client,
-        reference_client: build_binance_market_data_client,
+        reference_client: build_binance_market_data_client(
+          depth_limit: Integer(@env.fetch('BINANCE_REFERENCE_DEPTH_LIMIT', '5'))
+        ),
         max_deviation: @env.fetch('BINANCE_REFERENCE_MAX_DEVIATION', '0.03'),
         max_age_ms: @env.fetch('BINANCE_REFERENCE_MAX_AGE_MS', '2000')
       )
@@ -211,10 +284,10 @@ module PerpLiquidation
       )
     end
 
-    def build_binance_market_data_client
+    def build_binance_market_data_client(depth_limit: nil)
       BinanceFuturesMarketDataClient.new(
         endpoint: @env.fetch('BINANCE_FUTURES_URL', BinanceFuturesMarketDataClient::DEFAULT_ENDPOINT),
-        depth_limit: Integer(@env.fetch('BINANCE_DEPTH_LIMIT', '20')),
+        depth_limit: depth_limit || Integer(@env.fetch('BINANCE_DEPTH_LIMIT', '20')),
         exchange_info_ttl: Float(@env.fetch('BINANCE_EXCHANGE_INFO_TTL_SECONDS', '3600')),
         **http_timeout_options
       )
@@ -271,6 +344,12 @@ module PerpLiquidation
 
     def blank?(value)
       value.nil? || value.empty?
+    end
+
+    def database_pool_size
+      role_variable = %i[all api].include?(@role) ? 'DATABASE_POOL_SIZE_API' : 'DATABASE_POOL_SIZE_BACKGROUND'
+      configured = @env[role_variable] || @env['DATABASE_POOL_SIZE'] || DEFAULT_POOL_SIZES.fetch(@role)
+      Integer(configured)
     end
 
     def http_timeout_options

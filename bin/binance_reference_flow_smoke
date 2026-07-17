@@ -1,0 +1,170 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'bigdecimal'
+require 'json'
+require 'net/http'
+require 'time'
+require 'uri'
+require_relative '../lib/perp_liquidation'
+
+TOKEN = ENV.fetch('SERVICE_TOKEN', 'local-integration-token')
+LIQUIDATION_URL = ENV.fetch('LIQUIDATION_URL', 'http://127.0.0.1:9292')
+REFERENCE_URL = ENV.fetch('REFERENCE_SERVICES_URL', ENV.fetch('ORDER_SERVICE_URL', 'http://127.0.0.1:3101'))
+SYMBOL = ARGV.first || ENV.fetch('BINANCE_SYMBOL', 'BTCUSDT')
+POSITION_ID = '888'
+
+def request(method, url, body = nil)
+  uri = URI(url)
+  request_class = { get: Net::HTTP::Get, post: Net::HTTP::Post }.fetch(method)
+  message = request_class.new(uri)
+  message['Authorization'] = "Bearer #{TOKEN}"
+  message['Content-Type'] = 'application/json'
+  message.body = JSON.generate(body) if body
+  response = Net::HTTP.start(uri.host, uri.port) { |http| http.request(message) }
+  unless response.code.to_i.between?(200, 299)
+    raise "#{method.upcase} #{url} failed: #{response.code} #{response.body}"
+  end
+
+  JSON.parse(response.body)
+end
+
+def wait_for_task(task_id, statuses:, attempts: 80)
+  task = nil
+  attempts.times do
+    details = request(:get, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/tasks/#{task_id}")
+    task = details.fetch('data')
+    return [task, details] if statuses.include?(task.fetch('status'))
+
+    sleep 0.25
+  end
+  raise "task #{task_id} did not reach #{statuses.join(' or ')}: #{task && task['status']}"
+end
+
+def configure_internal_quote(quote)
+  request(
+    :post,
+    "#{REFERENCE_URL}/api/v1/internal/integration/market/quotes/#{SYMBOL}",
+    quote.snapshot
+  )
+end
+
+def reset_position
+  request(
+    :post,
+    "#{REFERENCE_URL}/api/v1/internal/integration/positions/#{POSITION_ID}/reset",
+    size: '0.001'
+  )
+  request(:get, "#{REFERENCE_URL}/api/v1/internal/positions/#{POSITION_ID}").fetch('data')
+end
+
+def submit_liquidation(position, bankruptcy_price:, label:)
+  sequence = (Time.now.utc.to_f * 1_000_000).to_i
+  decision_id = "binance_rest_#{label}_#{sequence}"
+  command = {
+    schema_version: 1,
+    risk_decision_id: decision_id,
+    risk_unit_id: "position:#{POSITION_ID}",
+    decision_sequence: sequence,
+    action: 'LIQUIDATE_POSITION',
+    execution_priority: 10,
+    user_id: position.fetch('user_id'),
+    account_id: position.fetch('account_id'),
+    position_id: position.fetch('position_id'),
+    position_version: position.fetch('version'),
+    symbol: position.fetch('symbol'),
+    position_side: position.fetch('side'),
+    instruction: {
+      target_quantity: '0.001', max_executable_quantity: '0.001', quantity_mode: 'EXACT',
+      order_type: 'MARKET', reduce_only: true, time_in_force: 'IOC', max_slippage: '0.005'
+    },
+    price_protection: {
+      bankruptcy_price: bankruptcy_price, max_deviation: '0.03', quote_max_age_ms: 10_000
+    },
+    risk_snapshot: {
+      position_size: position.fetch('size'), source: 'binance-rest-reference-flow-smoke',
+      market_data_timestamp: Time.now.utc.iso8601
+    },
+    expire_at: (Time.now.utc + 300).iso8601,
+    created_at: Time.now.utc.iso8601
+  }
+  task = request(:post, "#{LIQUIDATION_URL}/api/v1/internal/liquidation/commands", command).fetch('data')
+  [decision_id, task.fetch('task_id')]
+end
+
+binance_client = PerpLiquidation::BinanceFuturesMarketDataClient.new(
+  endpoint: ENV.fetch('BINANCE_FUTURES_URL', PerpLiquidation::BinanceFuturesMarketDataClient::DEFAULT_ENDPOINT),
+  depth_limit: Integer(ENV.fetch('BINANCE_DEPTH_LIMIT', '20')),
+  exchange_info_ttl: Float(ENV.fetch('BINANCE_EXCHANGE_INFO_TTL_SECONDS', '3600'))
+)
+
+puts "Binance REST liquidation reference validation: #{SYMBOL}"
+live_quote = binance_client.find(symbol: SYMBOL)
+puts "LIVE  bid=#{live_quote.best_bid.to_s('F')} ask=#{live_quote.best_ask.to_s('F')} " \
+     "sequence=#{live_quote.sequence} observed_at=#{live_quote.observed_at.iso8601(3)}"
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/loss-policy",
+  bankruptcy_price: nil, bankruptcy_loss: '0', insurance_coverage_ratio: '1', currency: 'USDT'
+)
+
+configure_internal_quote(live_quote)
+position = reset_position
+success_decision_id, success_task_id = submit_liquidation(
+  position,
+  bankruptcy_price: live_quote.best_bid.to_s('F'),
+  label: 'accept'
+)
+success_task, = wait_for_task(success_task_id, statuses: ['ORDER_ACCEPTED'])
+raise "accepted task #{success_task_id} has no order" unless success_task['order_id']
+
+request(
+  :post,
+  "#{REFERENCE_URL}/api/v1/internal/integration/orders/#{URI.encode_www_form_component(success_task.fetch('order_id'))}/fill",
+  average_price: live_quote.best_bid.to_s('F'), fee: '0.01'
+)
+success_task, success_details = wait_for_task(success_task_id, statuses: ['COMPLETED'])
+attempt = success_details.fetch('order_attempts').last
+raise "task #{success_task_id} did not execute exactly 0.001" unless success_task.fetch('executed_quantity') == '0.001'
+
+puts "PASS  aligned reference accepted order=#{attempt.fetch('order_id')} " \
+     "quantity=#{attempt.fetch('executed_quantity')} average_price=#{attempt.fetch('average_price')}"
+puts "PASS  settlement completed task=#{success_task_id} decision=#{success_decision_id}"
+
+latest_quote = binance_client.find(symbol: SYMBOL)
+divergent_bid = latest_quote.best_bid * BigDecimal('0.90')
+divergent_ask = latest_quote.best_ask * BigDecimal('0.90')
+divergent_quote = PerpLiquidation::MarketQuote.new(
+  symbol: SYMBOL,
+  best_bid: divergent_bid,
+  best_ask: divergent_ask,
+  observed_at: Time.now.utc,
+  sequence: latest_quote.sequence,
+  bids: [{ price: divergent_bid, quantity: '1' }],
+  asks: [{ price: divergent_ask, quantity: '1' }],
+  quantity_increment: latest_quote.quantity_increment
+)
+configure_internal_quote(divergent_quote)
+position = reset_position
+blocked_decision_id, blocked_task_id = submit_liquidation(
+  position,
+  bankruptcy_price: latest_quote.best_bid.to_s('F'),
+  label: 'divergence'
+)
+blocked_task, blocked_details = wait_for_task(blocked_task_id, statuses: ['RETRY_WAIT'])
+unless blocked_task['error_code'] == 'ReferencePriceDivergence' &&
+       blocked_task['order_id'].nil? && blocked_details.fetch('order_attempts').empty?
+  raise "task #{blocked_task_id} was not safely blocked: #{blocked_task}"
+end
+
+request(
+  :post,
+  "#{LIQUIDATION_URL}/api/v1/internal/liquidation/commands/#{URI.encode_www_form_component(blocked_decision_id)}/cancel",
+  reason: 'binance-reference-flow-smoke-complete'
+)
+configure_internal_quote(latest_quote)
+
+puts "PASS  10% divergence blocked without order task=#{blocked_task_id} " \
+     "error=#{blocked_task.fetch('error_code')}"
+puts 'RESULT PASS: live Binance REST data is active in the liquidation execution guard'

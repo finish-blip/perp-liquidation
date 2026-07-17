@@ -84,7 +84,7 @@ module PerpLiquidation
 
       rules = symbols.each_with_object({}) do |item, result|
         symbol = item.fetch('symbol').to_s
-        raise TypeError, "invalid symbol #{symbol.inspect}" unless symbol.match?(%r{\A[A-Z0-9]{2,30}\z})
+        next unless symbol.match?(%r{\A[A-Z0-9]{2,30}\z})
 
         filters = item.fetch('filters')
         raise TypeError, "filters for #{symbol} must be an array" unless filters.is_a?(Array)
