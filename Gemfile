@@ -8,7 +8,7 @@ ruby '~> 3.3.0'
 
 gem 'rake'
 gem 'base64', '~> 0.2.0'
-gem 'bigdecimal', '~> 3.1.0'
+gem 'bigdecimal', '~> 4.1.2'
 gem 'rack', '~> 2.2.23'
 gem 'puma', '~> 7.2.1'
 gem 'rspec'
