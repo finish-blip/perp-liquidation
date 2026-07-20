@@ -1,0 +1,170 @@
+name: perp-liquidation-node
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  LOG_LEVEL: info
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: liquidation
+  MYSQL_PASSWORD: liquidation
+  MYSQL_DATABASE: perp_liquidation
+  MYSQL_CONNECTION_LIMIT: "10"
+  REDIS_URL: redis://redis:6379
+  RABBITMQ_URL: amqp://liquidation:liquidation@rabbitmq:5672
+  SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN:-local-smoke-only-change-me}
+  PORTFOLIO_BASE_URL: ${PORTFOLIO_BASE_URL:-http://portfolio:3000}
+  ORDER_GATEWAY_BASE_URL: ${ORDER_GATEWAY_BASE_URL:-http://order-gateway:3000}
+  EVENT_PUBLISHER_BASE_URL: ${EVENT_PUBLISHER_BASE_URL:-http://event-publisher:3000}
+  BINANCE_FUTURES_BASE_URL: ${BINANCE_FUTURES_BASE_URL:-https://fapi.binance.com}
+  BINANCE_TIMEOUT_MS: "5000"
+  BINANCE_MAX_GET_ATTEMPTS: "2"
+  BINANCE_EXCHANGE_INFO_TTL_MS: "300000"
+  BINANCE_SMOKE_MARKET: ${BINANCE_SMOKE_MARKET:-BTCUSDT}
+  SHUTDOWN_TIMEOUT_MS: "10000"
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: local-root-only
+      MYSQL_DATABASE: perp_liquidation
+      MYSQL_USER: liquidation
+      MYSQL_PASSWORD: liquidation
+      TZ: UTC
+    command:
+      - --default-time-zone=+00:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${MYSQL_EXPOSE_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -plocal-root-only --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_EXPOSE_PORT:-6380}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.1-management-alpine}
+    environment:
+      RABBITMQ_DEFAULT_USER: liquidation
+      RABBITMQ_DEFAULT_PASS: liquidation
+    ports:
+      - "${RABBITMQ_EXPOSE_PORT:-5673}:5672"
+      - "${RABBITMQ_MANAGEMENT_EXPOSE_PORT:-15673}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      <<: *app-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+    ports:
+      - "${API_EXPOSE_PORT:-3010}:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  stream-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/src/bootstrap/stream-consumer.js"]
+    environment:
+      <<: *app-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+      STREAM_CONSUMER: ${STREAM_CONSUMER:-stream-consumer-compose-1}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  rabbit-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/src/bootstrap/rabbit-command-consumer.js"]
+    environment:
+      <<: *app-environment
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/src/bootstrap/worker.js"]
+    environment:
+      <<: *app-environment
+      WORKER_ID: ${WORKER_ID:-liquidation-worker-compose-1}
+      MAX_ORDER_QUANTITY: ${MAX_ORDER_QUANTITY:-1}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  binance-smoke:
+    profiles: ["smoke"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/src/bootstrap/binance-market-smoke.js"]
+    environment:
+      <<: *app-environment
+      API_HOST: 0.0.0.0
+      API_PORT: "3000"
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.local/perp-liquidation/liquidation-command.schema.json",
+  "title": "LiquidationCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message_id",
+    "correlation_id",
+    "command_type",
+    "decision_sequence",
+    "risk_unit_id",
+    "account_id",
+    "position_id",
+    "position_version",
+    "market",
+    "side",
+    "quantity",
+    "quantity_mode",
+    "strategy",
+    "expires_at"
+  ],
+  "properties": {
+    "message_id": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "correlation_id": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "command_type": {
+      "type": "string",
+      "enum": ["CANCEL_RISK_ORDERS", "REDUCE_POSITION", "LIQUIDATE_POSITION"]
+    },
+    "decision_sequence": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,19}$"
+    },
+    "risk_unit_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "account_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "position_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "position_version": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,19})$"
+    },
+    "market": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "side": { "type": "string", "enum": ["BUY", "SELL"] },
+    "quantity": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "quantity_mode": { "type": "string", "enum": ["EXACT", "UP_TO"] },
+    "strategy": { "type": "string", "enum": ["STATIC", "ADAPTIVE"] },
+    "max_slippage_bps": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

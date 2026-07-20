@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.local/perp-liquidation/risk-liquidation-requested-v1.schema.json",
+  "title": "RiskLiquidationRequestedV1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "eventId",
+    "eventType",
+    "eventVersion",
+    "occurredAt",
+    "producer",
+    "data"
+  ],
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "eventType": { "const": "risk.liquidation.requested.v1" },
+    "eventVersion": { "const": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "producer": { "const": "risk-control-service" },
+    "data": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "riskDecisionId",
+        "userId",
+        "accountId",
+        "positionId",
+        "symbol",
+        "positionSide",
+        "positionVersion",
+        "riskLevel",
+        "triggerReason",
+        "riskSnapshot",
+        "executionInstruction",
+        "expireAt"
+      ],
+      "properties": {
+        "riskDecisionId": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "decisionSequence": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
+        "riskUnitId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "positionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "symbol": { "type": "string", "pattern": "^[A-Z0-9_-]{1,32}$" },
+        "positionSide": { "enum": ["LONG", "SHORT"] },
+        "positionVersion": {
+          "anyOf": [
+            { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" },
+            { "type": "integer", "minimum": 0 }
+          ]
+        },
+        "riskLevel": { "const": "LIQUIDATION_REQUIRED" },
+        "triggerReason": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "riskSnapshot": { "type": "object" },
+        "executionInstruction": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "action",
+            "mode",
+            "targetReduceSize",
+            "orderType",
+            "reduceOnly"
+          ],
+          "properties": {
+            "action": { "const": "LIQUIDATE_POSITION" },
+            "mode": { "enum": ["PARTIAL_LIQUIDATION", "FULL_LIQUIDATION"] },
+            "targetReduceSize": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+            },
+            "maxReduceSize": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+            },
+            "orderType": { "enum": ["MARKET", "LIMIT"] },
+            "reduceOnly": { "const": true },
+            "maxSlippage": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+            },
+            "maxSlippageBps": { "type": "integer", "minimum": 0, "maximum": 5000 },
+            "timeInForce": { "type": "string", "minLength": 1, "maxLength": 16 }
+          }
+        },
+        "expireAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

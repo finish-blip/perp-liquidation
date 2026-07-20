@@ -1,0 +1,16 @@
+{
+  "message_id": "risk-command-20260718-000001",
+  "correlation_id": "risk-cycle-20260718-000042",
+  "command_type": "LIQUIDATE_POSITION",
+  "decision_sequence": "42",
+  "risk_unit_id": "account-1001:BTCUSDT",
+  "account_id": "account-1001",
+  "position_id": "position-9001",
+  "position_version": "12",
+  "market": "BTCUSDT",
+  "side": "SELL",
+  "quantity": "0.25",
+  "quantity_mode": "UP_TO",
+  "strategy": "STATIC",
+  "expires_at": "2026-07-18T03:05:00.000Z"
+}

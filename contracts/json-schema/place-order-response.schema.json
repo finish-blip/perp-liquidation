@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.local/perp-liquidation/place-order-response.schema.json",
+  "title": "PlaceOrderResponse",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted", "exchange_order_id"],
+      "properties": {
+        "accepted": { "const": true },
+        "exchange_order_id": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepted", "reason"],
+      "properties": {
+        "accepted": { "const": false },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    }
+  ]
+}

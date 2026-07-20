@@ -1,0 +1,12 @@
+{
+  "event_id": "settlement-event-20260718-000001",
+  "correlation_id": "risk-cycle-20260718-000042",
+  "client_order_id": "coid_0123456789abcdef0123456789abcdef",
+  "exchange_order_id": "exchange-order-9001",
+  "settlement_sequence": "1",
+  "position_id": "position-9001",
+  "previous_position_version": "12",
+  "new_position_version": "13",
+  "settled_quantity": "0.1",
+  "occurred_at": "2026-07-18T03:01:01.000Z"
+}

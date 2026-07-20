@@ -1,0 +1,10 @@
+{
+  "event_id": "order-event-20260718-000001",
+  "correlation_id": "risk-cycle-20260718-000042",
+  "client_order_id": "coid_0123456789abcdef0123456789abcdef",
+  "exchange_order_id": "exchange-order-9001",
+  "event_sequence": "2",
+  "event_type": "FILLED",
+  "cumulative_filled_quantity": "0.1",
+  "occurred_at": "2026-07-18T03:01:00.000Z"
+}

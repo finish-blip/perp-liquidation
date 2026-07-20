@@ -1,0 +1,21 @@
+{
+  "eventId": "outbox_result_001",
+  "eventType": "liquidation.execution.result.v1",
+  "eventVersion": 1,
+  "occurredAt": "2026-07-20T01:00:03.000Z",
+  "producer": "liquidation-service",
+  "data": {
+    "riskDecisionId": "risk_20260720010000_e58c112ed861",
+    "requestEventId": "liquidation:pos_001:1",
+    "taskId": "task_001",
+    "positionId": "pos_001",
+    "positionVersion": "2",
+    "status": "COMPLETED",
+    "requestedSize": "0.1",
+    "executedSize": "0.1",
+    "averagePrice": null,
+    "remainingSize": "0",
+    "errorCode": null,
+    "errorMessage": null
+  }
+}

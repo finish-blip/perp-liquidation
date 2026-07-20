@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.local/perp-liquidation/liquidation-execution-result-v1.schema.json",
+  "title": "LiquidationExecutionResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventId", "eventType", "eventVersion", "occurredAt", "producer", "data"],
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "eventType": { "const": "liquidation.execution.result.v1" },
+    "eventVersion": { "const": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "producer": { "const": "liquidation-service" },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "riskDecisionId",
+        "requestEventId",
+        "taskId",
+        "positionId",
+        "positionVersion",
+        "status",
+        "requestedSize",
+        "executedSize",
+        "averagePrice",
+        "remainingSize",
+        "errorCode",
+        "errorMessage"
+      ],
+      "properties": {
+        "riskDecisionId": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "requestEventId": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "taskId": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 96 },
+            { "type": "null" }
+          ]
+        },
+        "positionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "positionVersion": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" },
+        "status": {
+          "enum": ["COMPLETED", "PARTIALLY_COMPLETED", "EXPIRED", "SUPERSEDED", "REJECTED", "FAILED"]
+        },
+        "requestedSize": { "type": "string" },
+        "executedSize": { "type": "string" },
+        "averagePrice": { "type": ["string", "null"] },
+        "remainingSize": { "type": "string" },
+        "errorCode": { "type": ["string", "null"] },
+        "errorMessage": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "eventId": "liquidation:pos_001:1",
+  "eventType": "risk.liquidation.requested.v1",
+  "eventVersion": 1,
+  "occurredAt": "2026-07-20T01:00:00.000Z",
+  "producer": "risk-control-service",
+  "data": {
+    "riskDecisionId": "risk_20260720010000_e58c112ed861",
+    "decisionSequence": "42",
+    "riskUnitId": "acc_001:BTCUSDT",
+    "source": "risk-system",
+    "userId": "user_001",
+    "accountId": "acc_001",
+    "positionId": "pos_001",
+    "symbol": "BTCUSDT",
+    "positionSide": "LONG",
+    "positionVersion": "1",
+    "riskLevel": "LIQUIDATION_REQUIRED",
+    "triggerReason": "EQUITY_NON_POSITIVE",
+    "riskSnapshot": {
+      "markPrice": "64331",
+      "positionSize": "0.1"
+    },
+    "executionInstruction": {
+      "action": "LIQUIDATE_POSITION",
+      "mode": "FULL_LIQUIDATION",
+      "targetReduceSize": "0.1",
+      "maxReduceSize": "0.1",
+      "orderType": "MARKET",
+      "reduceOnly": true,
+      "maxSlippageBps": 50,
+      "timeInForce": "IOC"
+    },
+    "expireAt": "2026-07-20T01:00:15.000Z"
+  }
+}
